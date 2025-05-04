@@ -1,0 +1,35 @@
+apply plugin: 'com.android.library'
+
+buildscript {
+  ext.kotlin_version = '1.8.10'
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+  }
+}
+
+android {
+  namespace 'com.steptracker'
+  compileSdkVersion 33
+
+  defaultConfig {
+    minSdkVersion 21
+    targetSdkVersion 33
+  }
+
+  sourceSets {
+    main {
+      java.srcDirs = ['src/main/java']
+    }
+  }
+}
+
+dependencies {
+  implementation "com.facebook.react:react-native:+"
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'

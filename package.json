@@ -1,0 +1,12 @@
+{
+    "name": "react-native-smart-step-tracker",
+    "version": "1.0.0",
+    "main": "src/index.js",
+    "private": true,
+    "react-native": {
+      "android": {
+        "sourceDir": "android"
+      }
+    }
+  }
+  
