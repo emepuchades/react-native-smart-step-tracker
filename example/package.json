@@ -13,8 +13,7 @@
     },
     "devDependencies": {
       "@babel/core": "^7.22.9",
-      "@babel/runtime": "^7.22.9",
-      "@react-native/babel-preset": "^0.72.6"
+      "@babel/runtime": "^7.22.9"
     }
   }
   

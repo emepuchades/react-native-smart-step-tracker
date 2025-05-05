@@ -1,4 +1,5 @@
 package com.tempnativeproject;
+import com.steptracker.StepTrackerPackage;
 
 import android.app.Application;
 
@@ -9,8 +10,6 @@ import com.facebook.react.ReactPackage;
 import com.facebook.soloader.SoLoader;
 
 import java.util.List;
-
-import com.steptracker.StepTrackerPackage;
 
 public class MainApplication extends Application implements ReactApplication {
 
@@ -24,9 +23,7 @@ public class MainApplication extends Application implements ReactApplication {
 
         @Override
         protected List<ReactPackage> getPackages() {
-          List<ReactPackage> packages = new PackageList(this).getPackages();
-          packages.add(new StepTrackerPackage());
-          return packages;
+          return new PackageList(this).getPackages();
         }
 
         @Override
@@ -43,6 +40,6 @@ public class MainApplication extends Application implements ReactApplication {
   @Override
   public void onCreate() {
     super.onCreate();
-    SoLoader.init(this, /* native exopackage */ false);
+    SoLoader.init(this, false);
   }
 }

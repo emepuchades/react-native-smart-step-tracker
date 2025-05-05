@@ -6,41 +6,61 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
-import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.bridge.ReactContextBaseJavaModule
-import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.*
+import com.facebook.react.modules.core.DeviceEventManagerModule
 
 class StepTrackerModule(private val reactContext: ReactApplicationContext) :
-    ReactContextBaseJavaModule(reactContext), SensorEventListener {
+  ReactContextBaseJavaModule(reactContext),
+  SensorEventListener {
 
-    private var sensorManager: SensorManager? = null
-    private var stepCounterSensor: Sensor? = null
-    private var isTracking = false
+  private val sensorManager: SensorManager =
+    reactContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
-    override fun getName(): String = "StepTrackerModule"
+  private val stepSensor: Sensor? =
+    sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        ?: sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
 
-    @ReactMethod
-    fun startTracking() {
-        if (isTracking) return
+  @ReactMethod
+  fun startTracking() {
+    stepSensor?.let {
+      sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+    } ?: Log.e("StepTrackerModule", "❌ Sensor TYPE_STEP_COUNTER no disponible")
+  }
 
-        sensorManager = reactContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        stepCounterSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-
-        if (stepCounterSensor != null) {
-            sensorManager?.registerListener(this, stepCounterSensor, SensorManager.SENSOR_DELAY_UI)
-            isTracking = true
-            Log.d("StepTracker", "Sensor registrado")
-        } else {
-            Log.e("StepTracker", "No se encontró el sensor TYPE_STEP_COUNTER")
-        }
+  private fun sendStepEvent(steps: Float) {
+    val params = Arguments.createMap().apply {
+      putDouble("steps", steps.toDouble())
     }
+    reactContext
+      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+      .emit("onStep", params)
+  }
+  override fun getName(): String = "StepTrackerModule"
 
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event?.sensor?.type == Sensor.TYPE_STEP_COUNTER) {
-            val steps = event.values[0]
-            Log.d("StepTracker", "Pasos: $steps")
-        }
-    }
+  override fun onSensorChanged(event: SensorEvent?) {
+      when (event?.sensor?.type) {
+          Sensor.TYPE_STEP_COUNTER -> {
+              val steps = event.values[0]
+              Log.d("StepTrackerModule", "👣 Contador de pasos: $steps")
+              sendStepEvent(steps)
+          }
+          Sensor.TYPE_STEP_DETECTOR -> {
+              Log.d("StepTrackerModule", "👣 Paso detectado individual")
+              sendStepEvent(1f)
+          }
+      }
+  }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+  override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+  }
+
+  @ReactMethod
+  fun addListener(eventName: String) {
+    Log.d("StepTrackerModule", "Listener añadido: $eventName")
+  }
+
+  @ReactMethod
+  fun removeListeners(count: Int) {
+    Log.d("StepTrackerModule", "Listeners removidos: $count")
+  }
 }

@@ -94,8 +94,7 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
+
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
@@ -104,9 +103,8 @@ android {
 }
 
 dependencies {
-    // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
-    implementation project(':react-native-smart-step-trackeer')
+    implementation project(':react-native-smart-step-tracker')
     implementation fileTree(dir: "libs", include: ["*.jar"])
     
     debugImplementation("com.facebook.flipper:flipper:${FLIPPER_VERSION}")

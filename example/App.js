@@ -1,40 +1,67 @@
-import React, {useEffect} from 'react';
-import {SafeAreaView, Text, StyleSheet, NativeModules} from 'react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  NativeModules,
+  NativeEventEmitter,
+  StyleSheet,
+  Platform,
+  PermissionsAndroid,
+} from 'react-native';
 
-const {StepTrackerModule} = NativeModules;
+const { StepTrackerModule } = NativeModules;
 
 export default function App() {
-  useEffect(() => {
-    console.log('📲 App montada, iniciando tracking de pasos');
-    if (StepTrackerModule && StepTrackerModule.startTracking) {
-      StepTrackerModule.startTracking();
-    } else {
-      console.warn('StepTrackerModule no disponible');
+  const [steps, setSteps] = useState(0);
+
+  async function requestPermission() {
+    if (Platform.OS === 'android' && Platform.Version >= 29) {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION
+      );
+      console.log('Permiso ACTIVITY_RECOGNITION:', granted);
     }
+  }
+
+  useEffect(() => {
+    requestPermission();
+
+    const eventEmitter = new NativeEventEmitter(StepTrackerModule);
+    const subscription = eventEmitter.addListener('onStep', (event) => {
+      const currentSteps = Math.floor(event.steps);
+      setSteps(currentSteps);
+    });
+
+    StepTrackerModule.startTracking();
+
+    return () => {
+      console.log('🧹 Limpiando listener de pasos');
+      subscription.remove();
+    };
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>🚶 Contador de Pasos (nativo)</Text>
-      <Text style={styles.subtitle}>Mira el logcat para ver los pasos</Text>
-    </SafeAreaView>
+    <View style={styles.container}>
+      <Text style={styles.title}>👣 Pasos detectados:</Text>
+      <Text style={styles.count}>{steps}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
+    backgroundColor: '#111',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    justifyContent: 'center',
   },
   title: {
     fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 12,
+    color: '#ccc',
+    marginBottom: 16,
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#555',
+  count: {
+    fontSize: 48,
+    color: '#4CAF50',
   },
 });

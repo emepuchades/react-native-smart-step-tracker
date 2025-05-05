@@ -2,5 +2,5 @@ rootProject.name = 'tempNativeProject'
 apply from: file("../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesSettingsGradle(settings)
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
-include ':react-native-smart-step-trackeer'
-project(':react-native-smart-step-trackeer').projectDir = new File(rootProject.projectDir, '../../android')
+include ':react-native-smart-step-tracker'
+project(':react-native-smart-step-tracker').projectDir = new File(rootProject.projectDir, '../../android')
