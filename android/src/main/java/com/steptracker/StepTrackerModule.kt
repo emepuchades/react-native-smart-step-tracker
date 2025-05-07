@@ -122,6 +122,24 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
       .emit("onStep", params)
   }
 
+  @ReactMethod
+  fun getStepsHistory(promise: Promise) {
+    try {
+      val history = Arguments.createMap()
+      for ((key, value) in prefs.all) {
+        if (key.startsWith("history_") && value is Float) {
+          val date = key.removePrefix("history_")
+          history.putDouble(date, value.toDouble())
+        }
+      }
+      promise.resolve(history)
+    } catch (e: Exception) {
+      Log.e("StepTrackerModule", "Error al obtener historial", e)
+      promise.reject("ERROR_HISTORY", "No se pudo obtener el historial", e)
+    }
+  }
+
+
   override fun getName(): String = "StepTrackerModule"
 
   override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
