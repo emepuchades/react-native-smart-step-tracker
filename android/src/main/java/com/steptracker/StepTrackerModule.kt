@@ -45,6 +45,8 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
   }
 
+  override fun getName(): String = "StepTrackerModule"
+
   @ReactMethod
   fun startTracking() {
     Log.d("StepTrackerModule", "startTracking() fue llamado desde JS")
@@ -138,9 +140,6 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
       promise.reject("ERROR_HISTORY", "No se pudo obtener el historial", e)
     }
   }
-
-
-  override fun getName(): String = "StepTrackerModule"
 
   override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
   }

@@ -32,6 +32,20 @@ export default function App() {
       setSteps(currentSteps);
     });
 
+    if (StepTrackerModule.getStepsHistory) {
+      StepTrackerModule.getStepsHistory()
+        .then((history) => {
+          console.log('📜 Historial de pasos:', history);
+        })
+        .catch((err) => {
+          console.log('Error al obtener historial', err);
+        });
+    }
+
+    //StepTrackerModule.dumpRawPrefs().then(data => {
+      //console.log("📦 SharedPreferences completas:", data);
+    //});
+
     StepTrackerModule.startTracking();
 
     return () => {
