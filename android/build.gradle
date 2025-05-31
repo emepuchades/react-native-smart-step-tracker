@@ -13,11 +13,11 @@ buildscript {
 
 android {
   namespace 'com.steptracker'
-  compileSdkVersion 33
+  compileSdkVersion 34
 
   defaultConfig {
     minSdkVersion 21
-    targetSdkVersion 33
+    targetSdkVersion 34
   }
 
   sourceSets {
