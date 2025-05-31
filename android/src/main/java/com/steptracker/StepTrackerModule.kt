@@ -91,6 +91,16 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         putDouble("progress", progressD)
     }
 
+    @ReactMethod
+    fun ensureServiceRunning() {
+        val ctx = reactApplicationContext
+        val intent = Intent().apply {
+            setClassName(ctx, "com.steptracker.StepTrackerService")
+            action = "RESTART_SERVICE"
+        }
+        ContextCompat.startForegroundService(ctx, intent)
+    }
+
     @ReactMethod fun addListener(eventName: String) {}
     @ReactMethod fun removeListeners(count: Int) {}
 }

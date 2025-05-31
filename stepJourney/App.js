@@ -25,7 +25,7 @@ export default function HomeScreen() {
   useEffect(() => {
     let sub;
     let intervalId;
-
+    console.log("stats", stats);
     const requestPermissions = async () => {
       if (Platform.OS !== "android") return true;
 
@@ -61,9 +61,12 @@ export default function HomeScreen() {
       if (!(await requestPermissions())) return;
 
       StepTrackerModule.startTracking();
+      await StepTrackerModule.ensureServiceRunning();
+      setTimeout(() => {
+        StepTrackerModule.getTodayStats().then(setStats).catch(() => {});
+      }, 500);
 
-      StepTrackerModule.getTodayStats().then(setStats).catch(console.warn);
-
+      
       sub = DeviceEventEmitter.addListener("onStepStats", setStats);
 
       // ✅ Actualiza datos cada 5 segundos

@@ -38,20 +38,20 @@ class StepTrackerService : Service(), SensorEventListener {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification(0))
-        updateNotificationFromPrefs()
+        startForeground(NOTIF_ID, buildNotification(getTodaySteps()))
         stepSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
     }
 
-    private fun updateNotificationFromPrefs() {
-        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val steps = prefs.getFloat("history_$dateStr", 0f)
-        updateNotification(steps.toInt())
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Si se elimina manualmente y se reinicia desde la app
+        if (intent?.action == "RESTART_SERVICE") {
+            startForeground(NOTIF_ID, buildNotification(getTodaySteps()))
+            stepSensor?.let {
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+            }
+        }
         return START_STICKY
     }
 
@@ -66,7 +66,6 @@ class StepTrackerService : Service(), SensorEventListener {
     override fun onSensorChanged(ev: SensorEvent?) {
         ev ?: return
         val counter = ev.values[0]
-
         val wallTimeMs = System.currentTimeMillis()
 
         if (lastCounter < 0f || counter < lastCounter) {
@@ -121,13 +120,13 @@ class StepTrackerService : Service(), SensorEventListener {
     private fun createNotificationChannel() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "Conteo de pasos en segundo plano",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply { setShowBadge(false) }
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Conteo de pasos en segundo plano",
+                NotificationManager.IMPORTANCE_LOW
             )
+            channel.setShowBadge(false)
+            nm.createNotificationChannel(channel)
         }
     }
 
@@ -144,5 +143,10 @@ class StepTrackerService : Service(), SensorEventListener {
     private fun updateNotification(progress: Int) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIF_ID, buildNotification(progress))
+    }
+
+    private fun getTodaySteps(): Int {
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        return prefs.getFloat("history_$today", 0f).toInt()
     }
 }
