@@ -39,9 +39,16 @@ class StepTrackerService : Service(), SensorEventListener {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification(0))
+        updateNotificationFromPrefs()
         stepSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
+    }
+
+    private fun updateNotificationFromPrefs() {
+        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val steps = prefs.getFloat("history_$dateStr", 0f)
+        updateNotification(steps.toInt())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
