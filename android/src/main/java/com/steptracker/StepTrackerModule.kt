@@ -8,6 +8,8 @@ import com.facebook.react.bridge.*
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.work.*
+import java.util.concurrent.TimeUnit
 
 class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -99,6 +101,33 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             action = "RESTART_SERVICE"
         }
         ContextCompat.startForegroundService(ctx, intent)
+    }
+
+    @ReactMethod
+    fun getPrefs(promise: Promise) {
+        try {
+            val prefsName = StepTrackerService.PREFS_NAME
+            val prefs = reactApplicationContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+            val allEntries = prefs.all
+            val json = JSONObject()
+
+            for ((key, value) in allEntries) {
+                json.put(key, value)
+            }
+            promise.resolve(json.toString())
+        } catch (e: Exception) {
+            promise.reject("ERROR_PREFS", "No se pudo leer SharedPreferences", e)
+        }
+    }
+
+    @ReactMethod
+    fun scheduleBackgroundSync() {
+        val workRequest = PeriodicWorkRequestBuilder<StepSyncWorker>(15, TimeUnit.MINUTES)
+            .addTag("step_sync")
+            .build()
+
+        WorkManager.getInstance(reactApplicationContext)
+            .enqueueUniquePeriodicWork("step_sync", ExistingPeriodicWorkPolicy.KEEP, workRequest)
     }
 
     @ReactMethod fun addListener(eventName: String) {}
