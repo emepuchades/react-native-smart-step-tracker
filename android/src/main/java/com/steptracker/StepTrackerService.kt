@@ -9,6 +9,8 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.facebook.react.bridge.ReactMethod
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
@@ -19,6 +21,17 @@ class StepTrackerService : Service(), SensorEventListener {
         const val CHANNEL_ID = "steptracker_channel"
         const val NOTIF_ID = 1
         const val PREFS_NAME = "StepTrackerPrefs"
+
+        fun updateNotificationExternally(ctx: Context, steps: Int) {
+            val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Contando pasos")
+                .setContentText("Hoy: $steps pasos")
+                .setOngoing(true)
+                .build()
+            manager.notify(NOTIF_ID, notif)
+        }
     }
 
     private val sensorManager by lazy {
@@ -38,15 +51,22 @@ class StepTrackerService : Service(), SensorEventListener {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification(getTodaySteps()))
+        startForeground(NOTIF_ID, buildNotification(0))
+        updateNotificationFromPrefs()
         stepSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         }
     }
 
+    private fun updateNotificationFromPrefs() {
+        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val steps = prefs.getFloat("history_$dateStr", 0f)
+        updateNotification(steps.toInt())
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Si se elimina manualmente y se reinicia desde la app
         if (intent?.action == "RESTART_SERVICE") {
+            createNotificationChannel()
             startForeground(NOTIF_ID, buildNotification(getTodaySteps()))
             stepSensor?.let {
                 sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
@@ -91,6 +111,8 @@ class StepTrackerService : Service(), SensorEventListener {
 
         lastCounter = counter
         lastWallTimeMs = wallTimeMs
+        lastCounter = counter
+        prefs.edit().putFloat("last_counter", counter).apply()
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
@@ -120,13 +142,13 @@ class StepTrackerService : Service(), SensorEventListener {
     private fun createNotificationChannel() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Conteo de pasos en segundo plano",
-                NotificationManager.IMPORTANCE_LOW
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Conteo de pasos en segundo plano",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply { setShowBadge(false) }
             )
-            channel.setShowBadge(false)
-            nm.createNotificationChannel(channel)
         }
     }
 
