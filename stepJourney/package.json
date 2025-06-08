@@ -9,7 +9,8 @@
     "dependencies": {
         "react": "18.2.0",
         "react-native": "0.72.10",
-        "react-native-smart-step-tracker": "file:.."
+        "react-native-smart-step-tracker": "file:..",
+        "react-native-vector-icons": "^10.2.0"
     },
     "devDependencies": {
         "@babel/core": "^7.22.9",

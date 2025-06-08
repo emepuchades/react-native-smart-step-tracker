@@ -1,4 +1,3 @@
-// StepSummary.js
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -12,7 +11,7 @@ import {
 
 const { StepTrackerModule } = NativeModules;
 
-const StepSummary = ({stats}) => {
+const StepSummary = ({ stats }) => {
   const [mode, setMode] = useState("day");
   const [date, setDate] = useState(new Date());
   const [data, setData] = useState({});
@@ -20,11 +19,25 @@ const StepSummary = ({stats}) => {
 
   useEffect(() => {
     load();
-  }, [mode, date, stats]);
+  }, [mode, date]);
 
   useEffect(() => {
-    load();
-  }, []);
+    if (mode !== "day") return;
+
+    const iso = date.toISOString().slice(0, 10);
+    StepTrackerModule.getStepsByHourHistory(iso)
+      .then((hourly) => {
+        if (JSON.stringify(hourly) !== JSON.stringify(data)) {
+          setLoading(true);
+          setData(hourly);
+          setLoading(false);
+        }
+      })
+      .catch((e) => {
+        console.warn("StepSummary:", e);
+        setLoading(false);
+      });
+  }, [stats]);
 
   const load = async () => {
     setLoading(true);
@@ -33,7 +46,6 @@ const StepSummary = ({stats}) => {
         const iso = date.toISOString().slice(0, 10);
         const hourly = await StepTrackerModule.getStepsByHourHistory(iso);
         setData(hourly);
-        console.log("data", data);
       } else {
         const history = await StepTrackerModule.getStepsHistory();
         const tmp = {};
@@ -44,7 +56,6 @@ const StepSummary = ({stats}) => {
           tmp[iso] = history[iso] || 0;
         }
         setData(tmp);
-        console.log("data", data);
       }
     } catch (e) {
       console.warn("StepSummary:", e);
@@ -55,7 +66,10 @@ const StepSummary = ({stats}) => {
 
   const entries = Object.entries(data);
   const max = Math.max(...entries.map(([, v]) => v), 1);
-  const Bar = ({ value }) => <View style={[styles.bar, { width: `30%` }]} />;
+
+  const Bar = ({ value }) => (
+    <View style={styles.bar} />
+  );
 
   const Row = ({ label, value }) => (
     <View style={styles.row}>
@@ -89,7 +103,7 @@ const StepSummary = ({stats}) => {
           {mode === "day"
             ? entries
                 .sort(([a], [b]) => parseInt(a) - parseInt(b))
-                .filter(([, v]) => v > 0) 
+                .filter(([, v]) => v > 0)
                 .map(([h, v]) => (
                   <Row key={h} label={`${h.padStart(2, "0")}h`} value={v} />
                 ))
