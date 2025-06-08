@@ -3,14 +3,13 @@ package com.steptracker
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
-import com.facebook.react.bridge.ReactMethod
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
@@ -92,27 +91,48 @@ class StepTrackerService : Service(), SensorEventListener {
             lastCounter = counter
             lastWallTimeMs = wallTimeMs
             initDailyOffsetIfNeeded(counter, wallTimeMs)
+
+            val dateStrInit = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                .format(Date(wallTimeMs))
+            prefs.edit()
+                .putString("prev_date", dateStrInit)
+                .putFloat("last_counter", counter)
+                .putLong("last_counter_time", wallTimeMs)
+                .apply()
+
+            Log.d("StepService", "Init-event ⇒ offset=$todayOffsetCounter, prev_date=$dateStrInit")
             return
         }
 
         val delta = counter - lastCounter
         if (delta <= 0f || delta > 2000f) return
 
-        val cal = Calendar.getInstance().apply { timeInMillis = wallTimeMs }
-        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(cal.time)
-        val hourStr = SimpleDateFormat("HH", Locale.getDefault()).format(cal.time)
+        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(wallTimeMs))
+        val hourStr = SimpleDateFormat("HH", Locale.getDefault()).format(Date(wallTimeMs))
+
+        val savedDate = prefs.getString("prev_date", null)
+        if (savedDate != dateStr) {
+            initDailyOffsetIfNeeded(counter, wallTimeMs)
+            prefs.edit().putString("prev_date", dateStr).apply()
+            Log.d("StepService", "Nuevo día en Service, offset=$todayOffsetCounter")
+        }
+
         saveHourlyFor(dateStr, hourStr, delta)
 
-        if (todayOffsetCounter < 0f) initDailyOffsetIfNeeded(counter - delta, wallTimeMs)
         val stepsToday = counter - todayOffsetCounter
-        prefs.edit().putFloat("history_$dateStr", stepsToday).apply()
+
+        prefs.edit()
+            .putFloat("history_$dateStr", stepsToday)
+            .putFloat("last_counter", counter)
+            .putLong("last_counter_time", wallTimeMs)
+            .apply()
+
+        Log.d("StepService", "stepsToday=$stepsToday con offset=$todayOffsetCounter")
 
         updateNotification(stepsToday.toInt())
 
         lastCounter = counter
         lastWallTimeMs = wallTimeMs
-        lastCounter = counter
-        prefs.edit().putFloat("last_counter", counter).apply()
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
