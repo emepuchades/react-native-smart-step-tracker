@@ -1,72 +1,81 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import {View, Text, StyleSheet} from 'react-native';
+import {
+  Svg,
+  Circle,
+  G,
+  Defs,
+  LinearGradient,
+  Stop,
+  Rect,
+  Polygon,
+  Path,
+} from 'react-native-svg';
 
 const CircleBar = ({steps}) => {
   const dailySteps = steps;
   const dailyGoal = 10000;
   const completionPercentage = Math.min(dailySteps / dailyGoal, 1);
+
   const radius = 60;
-  const strokeWidth = 8;
+  const strokeWidth = 6;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - circumference * completionPercentage;
 
   return (
     <View style={styles.progressContent}>
       <View style={styles.circleContainer}>
-
-        <View style={[styles.circleBackground, {
-          width: radius * 2,
-          height: radius * 2,
-          borderRadius: radius,
-          borderWidth: strokeWidth,
-        }]} />
-        
-        <View style={[styles.progressWrapper, {
-          width: radius * 2,
-          height: radius * 2,
-          borderRadius: radius,
-        }]}>
-          <View style={[styles.progressHalf, styles.progressLeft, {
-            width: radius,
-            height: radius * 2,
-            borderTopLeftRadius: radius,
-            borderBottomLeftRadius: radius,
-            transform: [{ 
-              rotate: completionPercentage > 0.5 ? '0deg' : `${(completionPercentage * 2) * 180}deg` 
-            }]
-          }]} />
-          
-          <View style={[styles.progressHalf, styles.progressRight, {
-            width: radius,
-            height: radius * 2,
-            borderTopRightRadius: radius,
-            borderBottomRightRadius: radius,
-            transform: [{ 
-              rotate: completionPercentage > 0.5 ? `${((completionPercentage - 0.5) * 2) * 180}deg` : '0deg'
-            }]
-          }]} />
-        </View>
-        
-        <View style={[styles.innerCircle, {
-          width: (radius - strokeWidth) * 2,
-          height: (radius - strokeWidth) * 2,
-          borderRadius: radius - strokeWidth,
-        }]} />
-        
+        <Svg
+          width={radius * 2 + strokeWidth * 2}
+          height={radius * 2 + strokeWidth * 2}>
+          <Defs>
+            <LinearGradient
+              id="progressGradient"
+              x1="0%"
+              y1="0%"
+              x2="100%"
+              y2="0%">
+              <Stop offset="0%" stopColor="#007AFF" />
+              <Stop offset="100%" stopColor="#5AC8FA" />
+            </LinearGradient>
+          </Defs>
+          <G
+            transform={`translate(${radius + strokeWidth}, ${
+              radius + strokeWidth
+            })`}>
+            <Circle
+              r={radius}
+              fill="transparent"
+              stroke="#F2F2F7"
+              strokeWidth={strokeWidth}
+            />
+            <Circle
+              r={radius}
+              fill="transparent"
+              stroke="url(#progressGradient)"
+              strokeWidth={strokeWidth}
+              strokeDasharray={circumference}
+              strokeDashoffset={strokeDashoffset}
+              strokeLinecap="round"
+              transform="rotate(-90)"
+            />
+          </G>
+        </Svg>
         <View style={styles.circleText}>
           <Text style={styles.stepsCount}>{dailySteps.toLocaleString()}</Text>
           <Text style={styles.stepsLabel}>steps</Text>
         </View>
       </View>
-
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   progressContent: {
-    alignItems: "center",
+    alignItems: 'center',
   },
   circleContainer: {
-    position: "relative",
+    position: 'relative',
     marginRight: 24,
     width: 112,
     height: 112,
@@ -116,30 +125,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     elevation: 2,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
   circleText: {
-    position: "absolute",
-    justifyContent: "center",
-    alignItems: "center",
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
     zIndex: 10,
   },
   stepsCount: {
     fontSize: 18,
-    fontWeight: "700",
-    color: "#1A1A1A",
+    fontWeight: '700',
+    color: '#1A1A1A',
   },
   stepsLabel: {
     fontSize: 14,
-    color: "#8E8E93",
+    color: '#8E8E93',
     marginTop: 1,
   },
   percentageText: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "#007AFF",
+    fontWeight: '600',
+    color: '#007AFF',
     marginTop: 2,
   },
   progressDetails: {
@@ -151,13 +160,13 @@ const styles = StyleSheet.create({
   },
   motivationText: {
     fontSize: 18,
-    fontWeight: "600",
-    color: "#1A1A1A",
+    fontWeight: '600',
+    color: '#1A1A1A',
     marginBottom: 4,
   },
   remainingText: {
     fontSize: 14,
-    color: "#8E8E93",
+    color: '#8E8E93',
     lineHeight: 20,
   },
 });

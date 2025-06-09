@@ -1,7 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
-    <!-- Permiso necesario para apps React Native -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
