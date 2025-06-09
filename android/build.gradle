@@ -8,16 +8,17 @@ buildscript {
   }
   dependencies {
     classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+
   }
 }
 
 android {
   namespace 'com.steptracker'
-  compileSdkVersion 33
+  compileSdkVersion 34
 
   defaultConfig {
     minSdkVersion 21
-    targetSdkVersion 33
+    targetSdkVersion 34
   }
 
   sourceSets {
@@ -29,6 +30,7 @@ android {
 
 dependencies {
   implementation "com.facebook.react:react-native:+"
+  implementation "androidx.work:work-runtime-ktx:2.9.0"
 }
 
 apply plugin: 'com.android.library'

@@ -72,14 +72,14 @@ metro.config.js
 jest.config.js
 
 # Android/React Native native artifacts
-example/android/.gradle/
-example/android/app/build/
-example/android/build/
+stepJourney/android/.gradle/
+stepJourney/android/app/build/
+stepJourney/android/build/
 
 # iOS/React Native native artifacts (en caso de usar iOS en el futuro)
-example/ios/build/
-example/ios/Pods/
-example/ios/Podfile.lock
+stepJourney/ios/build/
+stepJourney/ios/Pods/
+stepJourney/ios/Podfile.lock
 
 # Android local SDK config
 local.properties

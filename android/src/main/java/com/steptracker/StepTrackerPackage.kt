@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class StepTrackerPackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-    return listOf(StepTrackerModule(reactContext))
+    return listOf(StepTrackerModule(reactContext)) // REGISTRO DEL MÓDULO
   }
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
