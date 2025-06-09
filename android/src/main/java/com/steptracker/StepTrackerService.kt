@@ -3,12 +3,12 @@ package com.steptracker
 import android.app.*
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -18,63 +18,54 @@ class StepTrackerService : Service(), SensorEventListener {
 
     companion object {
         const val CHANNEL_ID = "steptracker_channel"
-        const val NOTIF_ID = 1
+        const val NOTIF_ID   = 1
         const val PREFS_NAME = "StepTrackerPrefs"
 
+        const val ACTION_STEPS_UPDATE = "com.steptracker.STEPS_UPDATE"
+        const val EXTRA_STEPS         = "steps_today"
+
         fun updateNotificationExternally(ctx: Context, steps: Int) {
-            val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
+            val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            mgr.notify(NOTIF_ID, buildBaseNotification(ctx, steps))
+        }
+
+        private fun buildBaseNotification(ctx: Context, steps: Int) =
+            NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("Contando pasos")
                 .setContentText("Hoy: $steps pasos")
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setForegroundServiceBehavior(
+                    NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
                 .build()
-            manager.notify(NOTIF_ID, notif)
-        }
     }
 
-    private val sensorManager by lazy {
-        getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    }
-    private val stepSensor by lazy {
-        sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-    }
-    private val prefs by lazy {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-    }
+    private val sensorManager by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
+    private val stepSensor    by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
+    private val prefs         by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
 
-    private var lastCounter = -1f
-    private var lastWallTimeMs = 0L
+    private var lastCounter        = -1f
     private var todayOffsetCounter = -1f
 
     override fun onCreate() {
         super.onCreate()
+
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification(0))
+        startForeground(NOTIF_ID, buildBaseNotification(this, 0))
+
+        lastCounter        = prefs.getFloat("last_counter", -1f)
+        todayOffsetCounter = prefs.getFloat(offsetKey(todayStr()), -1f)
+
+        stepSensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
         updateNotificationFromPrefs()
-        stepSensor?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-        }
-    }
-
-    private fun updateNotificationFromPrefs() {
-        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val steps = prefs.getFloat("history_$dateStr", 0f)
-        updateNotification(steps.toInt())
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "RESTART_SERVICE") {
-            createNotificationChannel()
-            startForeground(NOTIF_ID, buildNotification(getTodaySteps()))
-            stepSensor?.let {
-                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-            }
-        }
-        return START_STICKY
     }
 
     override fun onDestroy() {
+        prefs.edit()
+            .putFloat("last_counter", lastCounter)
+            .apply()
+
         sensorManager.unregisterListener(this)
         stopForeground(true)
         super.onDestroy()
@@ -85,82 +76,95 @@ class StepTrackerService : Service(), SensorEventListener {
     override fun onSensorChanged(ev: SensorEvent?) {
         ev ?: return
         val counter = ev.values[0]
-        val wallTimeMs = System.currentTimeMillis()
+        val nowMs   = System.currentTimeMillis()
+        val today   = todayStr(nowMs)
 
-        if (lastCounter < 0f || counter < lastCounter) {
+        if (lastCounter < 0f) {
+            initOrFixOffset(counter, nowMs)
+            persistBaseState(counter, nowMs, today)
+            broadcastAndNotify(counter - todayOffsetCounter)
             lastCounter = counter
-            lastWallTimeMs = wallTimeMs
-            initDailyOffsetIfNeeded(counter, wallTimeMs)
-
-            val dateStrInit = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                .format(Date(wallTimeMs))
-            prefs.edit()
-                .putString("prev_date", dateStrInit)
-                .putFloat("last_counter", counter)
-                .putLong("last_counter_time", wallTimeMs)
-                .apply()
-
-            Log.d("StepService", "Init-event ⇒ offset=$todayOffsetCounter, prev_date=$dateStrInit")
             return
         }
 
-        val delta = counter - lastCounter
-        if (delta <= 0f || delta > 2000f) return
-
-        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(wallTimeMs))
-        val hourStr = SimpleDateFormat("HH", Locale.getDefault()).format(Date(wallTimeMs))
-
-        val savedDate = prefs.getString("prev_date", null)
-        if (savedDate != dateStr) {
-            initDailyOffsetIfNeeded(counter, wallTimeMs)
-            prefs.edit().putString("prev_date", dateStr).apply()
-            Log.d("StepService", "Nuevo día en Service, offset=$todayOffsetCounter")
+        if (counter < lastCounter) {
+            initOrFixOffset(counter, nowMs)
+            persistBaseState(counter, nowMs, today)
+            broadcastAndNotify(0f)
+            lastCounter = counter
+            return
         }
 
-        saveHourlyFor(dateStr, hourStr, delta)
+        val prevDate = prefs.getString("prev_date", today)
+        if (prevDate != today) {
+            initOrFixOffset(counter, nowMs)
+            prefs.edit().putString("prev_date", today).apply()
+        }
+
+        val delta = counter - lastCounter
+        if (delta <= 0f || delta > 2000f) {
+            lastCounter = counter
+            return
+        }
+
+        saveHourly(today, hourStr(nowMs), delta)
 
         val stepsToday = counter - todayOffsetCounter
-
         prefs.edit()
-            .putFloat("history_$dateStr", stepsToday)
+            .putFloat(historyKey(today), stepsToday)
             .putFloat("last_counter", counter)
-            .putLong("last_counter_time", wallTimeMs)
             .apply()
 
-        Log.d("StepService", "stepsToday=$stepsToday con offset=$todayOffsetCounter")
-
-        updateNotification(stepsToday.toInt())
-
+        broadcastAndNotify(stepsToday)
         lastCounter = counter
-        lastWallTimeMs = wallTimeMs
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    private fun saveHourlyFor(date: String, hour: String, delta: Float) {
-        val key = "hourly_$date"
+    private fun broadcastAndNotify(steps: Float) {
+        val i = Intent(ACTION_STEPS_UPDATE).putExtra(EXTRA_STEPS, steps.toInt())
+        sendBroadcast(i)
+        updateNotificationExternally(this, steps.toInt())
+    }
+
+    private fun saveHourly(date: String, hour: String, delta: Float) {
+        val key  = hourlyKey(date)
         val json = JSONObject(prefs.getString(key, "{}") ?: "{}")
-        val curr = json.optDouble(hour, 0.0)
-        json.put(hour, curr + delta)
+        json.put(hour, json.optDouble(hour, 0.0) + delta)
         prefs.edit().putString(key, json.toString()).apply()
     }
 
-    private fun offsetKey(date: String) = "offset_$date"
+    private fun initOrFixOffset(counter: Float, timeMs: Long) {
+        val today = todayStr(timeMs)
+        val key   = offsetKey(today)
 
-    private fun initDailyOffsetIfNeeded(counter: Float, timeMs: Long) {
-        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(timeMs))
-        val key = offsetKey(dateStr)
-
-        todayOffsetCounter = if (prefs.contains(key)) {
-            prefs.getFloat(key, counter)
-        } else {
+        val saved = prefs.getFloat(key, -1f)
+        if (saved < 0f) {
             prefs.edit().putFloat(key, counter).apply()
-            counter
+            todayOffsetCounter = counter
+        } else {
+            if (counter > saved) {
+                val missed = counter - saved
+                val prev   = prefs.getFloat(historyKey(today), 0f)
+                prefs.edit()
+                    .putFloat(historyKey(today), prev + missed)
+                    .putFloat(key, counter)
+                    .apply()
+            }
+            todayOffsetCounter = prefs.getFloat(key, counter)
         }
     }
 
+    private fun persistBaseState(counter: Float, timeMs: Long, date: String) {
+        prefs.edit()
+            .putString("prev_date", date)
+            .putFloat("last_counter", counter)
+            .putLong("last_counter_time", timeMs)
+            .apply()
+    }
+
     private fun createNotificationChannel() {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             nm.createNotificationChannel(
                 NotificationChannel(
@@ -172,23 +176,18 @@ class StepTrackerService : Service(), SensorEventListener {
         }
     }
 
-    private fun buildNotification(progress: Int): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Contando pasos")
-            .setContentText("Hoy: $progress pasos")
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .build()
-
-    private fun updateNotification(progress: Int) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIF_ID, buildNotification(progress))
+    private fun updateNotificationFromPrefs() {
+        val steps = prefs.getFloat(historyKey(todayStr()), 0f).toInt()
+        updateNotificationExternally(this, steps)
     }
 
-    private fun getTodaySteps(): Int {
-        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        return prefs.getFloat("history_$today", 0f).toInt()
-    }
+    private fun todayStr(ms: Long = System.currentTimeMillis()) =
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(ms))
+
+    private fun hourStr(ms: Long) =
+        SimpleDateFormat("HH", Locale.getDefault()).format(Date(ms))
+
+    private fun historyKey(date: String) = "history_$date"
+    private fun hourlyKey(date: String)  = "hourly_$date"
+    private fun offsetKey(date: String)  = "offset_$date"
 }
