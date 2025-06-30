@@ -1,4 +1,6 @@
 apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'kotlin-kapt'          // 👈  NUEVO
 
 buildscript {
   ext.kotlin_version = '1.8.10'
@@ -8,30 +10,28 @@ buildscript {
   }
   dependencies {
     classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-
   }
 }
 
 android {
   namespace 'com.steptracker'
   compileSdkVersion 34
-
   defaultConfig {
     minSdkVersion 21
     targetSdkVersion 34
   }
-
   sourceSets {
-    main {
-      java.srcDirs = ['src/main/java']
-    }
+    main { java.srcDirs = ['src/main/java'] }
   }
 }
 
 dependencies {
   implementation "com.facebook.react:react-native:+"
   implementation "androidx.work:work-runtime-ktx:2.9.0"
-}
 
-apply plugin: 'com.android.library'
-apply plugin: 'kotlin-android'
+  // 🆕  Room
+  def room_version = "2.6.1"
+  implementation "androidx.room:room-runtime:$room_version"
+  implementation "androidx.room:room-ktx:$room_version"
+  kapt           "androidx.room:room-compiler:$room_version"
+}
