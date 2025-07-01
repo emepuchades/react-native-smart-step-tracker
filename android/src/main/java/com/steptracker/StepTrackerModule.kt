@@ -2,27 +2,24 @@ package com.steptracker
 
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.*
-import org.json.JSONObject
+import com.steptracker.data.StepsDatabaseHelper
+import androidx.work.*
 import java.text.SimpleDateFormat
 import java.util.*
-import androidx.work.*
 import java.util.concurrent.TimeUnit
 
 class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
     companion object {
-        private const val PREFS_NAME = "StepTrackerPrefs"
         private const val DAILY_GOAL_DEFAULT = 10_000
         private const val STRIDE_METERS = 0.78f
         private const val KCAL_PER_STEP = 0.04f
     }
 
-    private val prefs: SharedPreferences =
-        reactContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val db = StepsDatabaseHelper(reactContext)
 
     override fun getName() = "StepTrackerModule"
 
@@ -42,7 +39,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     fun getTodayStats(promise: Promise) {
         try {
             val today = getTodayDate()
-            val steps = prefs.getFloat("history_$today", 0f)
+            val steps = db.getStepsForDate(today)
             promise.resolve(buildStatsMap(steps))
         } catch (e: Exception) {
             promise.reject("ERROR_TODAY_STATS", "No se pudieron obtener los datos de hoy", e)
@@ -53,11 +50,13 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     fun getStepsHistory(promise: Promise) {
         try {
             val history = Arguments.createMap()
-            prefs.all.forEach { (key, value) ->
-                if (key.startsWith("history_") && value is Float) {
-                    history.putDouble(key.removePrefix("history_"), value.toDouble())
-                }
+            val cursor = db.getAllDailyHistory()
+            while (cursor.moveToNext()) {
+                val date = cursor.getString(cursor.getColumnIndexOrThrow("date"))
+                val steps = cursor.getInt(cursor.getColumnIndexOrThrow("steps"))
+                history.putDouble(date, steps.toDouble())
             }
+            cursor.close()
             promise.resolve(history)
         } catch (e: Exception) {
             promise.reject("ERROR_HISTORY", "No se pudo obtener el historial", e)
@@ -67,12 +66,15 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun getStepsByHourHistory(date: String, promise: Promise) {
         try {
-            val json = JSONObject(prefs.getString("hourly_$date", "{}") ?: "{}")
-            val result = Arguments.createMap()
-            json.keys().forEach { hour ->
-                result.putDouble(hour, json.getDouble(hour))
+            val hourlyMap = Arguments.createMap()
+            val cursor = db.getHourlyForDate(date)
+            while (cursor.moveToNext()) {
+                val hour = cursor.getInt(cursor.getColumnIndexOrThrow("hour")).toString()
+                val steps = cursor.getInt(cursor.getColumnIndexOrThrow("steps"))
+                hourlyMap.putDouble(hour, steps.toDouble())
             }
-            promise.resolve(result)
+            cursor.close()
+            promise.resolve(hourlyMap)
         } catch (e: Exception) {
             promise.reject("ERROR_HOURLY_HISTORY", "No se pudo obtener el historial horario", e)
         }
@@ -81,11 +83,12 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     private fun getTodayDate(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
 
-    private fun buildStatsMap(steps: Float): WritableMap = Arguments.createMap().apply {
+    private fun buildStatsMap(steps: Int): WritableMap = Arguments.createMap().apply {
         val stepsD     = steps.toDouble()
         val caloriesD  = stepsD * KCAL_PER_STEP
         val distanceD  = stepsD * STRIDE_METERS / 1_000
-        val progressD  = stepsD / prefs.getInt("daily_goal", DAILY_GOAL_DEFAULT) * 100
+        val dailyGoal  = db.getConfigValue("daily_goal")?.toIntOrNull() ?: DAILY_GOAL_DEFAULT
+        val progressD  = stepsD / dailyGoal * 100
 
         putDouble("steps", stepsD)
         putDouble("calories", caloriesD)
@@ -104,23 +107,6 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun getPrefs(promise: Promise) {
-        try {
-            val prefsName = StepTrackerService.PREFS_NAME
-            val prefs = reactApplicationContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
-            val allEntries = prefs.all
-            val json = JSONObject()
-
-            for ((key, value) in allEntries) {
-                json.put(key, value)
-            }
-            promise.resolve(json.toString())
-        } catch (e: Exception) {
-            promise.reject("ERROR_PREFS", "No se pudo leer SharedPreferences", e)
-        }
-    }
-
-    @ReactMethod
     fun scheduleBackgroundSync() {
         val workRequest = PeriodicWorkRequestBuilder<StepSyncWorker>(15, TimeUnit.MINUTES)
             .addTag("step_sync")
@@ -130,6 +116,8 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             .enqueueUniquePeriodicWork("step_sync", ExistingPeriodicWorkPolicy.KEEP, workRequest)
     }
 
-    @ReactMethod fun addListener(eventName: String) {}
-    @ReactMethod fun removeListeners(count: Int) {}
+    @ReactMethod
+    fun addListener(eventName: String) {}
+    @ReactMethod
+    fun removeListeners(count: Int) {}
 }

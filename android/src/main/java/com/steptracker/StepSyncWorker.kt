@@ -4,22 +4,26 @@ import android.content.Context
 import android.util.Log
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import com.steptracker.data.StepsDatabaseHelper
 import java.text.SimpleDateFormat
 import java.util.*
 
 class StepSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
 
-    override fun doWork(): Result {
-        val prefs = applicationContext.getSharedPreferences(
-            StepTrackerService.PREFS_NAME, Context.MODE_PRIVATE
-        )
+    private val db = StepsDatabaseHelper(applicationContext)
 
-        val today  = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val steps  = prefs.getFloat("history_$today", 0f).toInt()
+    override fun doWork(): Result {
+        val today = getTodayDate()
+        val steps = db.getStepsForDate(today).toInt()
+
         Log.d("StepSyncWorker", "Subo $steps pasos del $today al servidor…")
 
         StepTrackerService.updateNotificationExternally(applicationContext, steps)
 
         return Result.success()
+    }
+
+    private fun getTodayDate(): String {
+        return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
     }
 }

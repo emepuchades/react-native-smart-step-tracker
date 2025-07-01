@@ -8,9 +8,8 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.IBinder
-import android.util.Log
 import androidx.core.app.NotificationCompat
-import org.json.JSONObject
+import com.steptracker.data.StepsDatabaseHelper
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -18,11 +17,10 @@ class StepTrackerService : Service(), SensorEventListener {
 
     companion object {
         const val CHANNEL_ID = "steptracker_channel"
-        const val NOTIF_ID   = 1
-        const val PREFS_NAME = "StepTrackerPrefs"
+        const val NOTIF_ID = 1
 
         const val ACTION_STEPS_UPDATE = "com.steptracker.STEPS_UPDATE"
-        const val EXTRA_STEPS         = "steps_today"
+        const val EXTRA_STEPS = "steps_today"
 
         fun updateNotificationExternally(ctx: Context, steps: Int) {
             val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -36,16 +34,15 @@ class StepTrackerService : Service(), SensorEventListener {
                 .setContentText("Hoy: $steps pasos")
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setForegroundServiceBehavior(
-                    NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
                 .build()
     }
 
     private val sensorManager by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
-    private val stepSensor    by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
-    private val prefs         by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
+    private val stepSensor by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
+    private val db by lazy { StepsDatabaseHelper(this) }
 
-    private var lastCounter        = -1f
+    private var lastCounter = -1f
     private var todayOffsetCounter = -1f
 
     override fun onCreate() {
@@ -54,18 +51,15 @@ class StepTrackerService : Service(), SensorEventListener {
         createNotificationChannel()
         startForeground(NOTIF_ID, buildBaseNotification(this, 0))
 
-        lastCounter        = prefs.getFloat("last_counter", -1f)
-        todayOffsetCounter = prefs.getFloat(offsetKey(todayStr()), -1f)
+        lastCounter = db.getLastCounter()
+        todayOffsetCounter = db.getTodayOffset(todayStr())
 
         stepSensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
-        updateNotificationFromPrefs()
+        updateNotificationFromDb()
     }
 
     override fun onDestroy() {
-        prefs.edit()
-            .putFloat("last_counter", lastCounter)
-            .apply()
-
+        db.setLastCounter(lastCounter)
         sensorManager.unregisterListener(this)
         stopForeground(true)
         super.onDestroy()
@@ -76,8 +70,8 @@ class StepTrackerService : Service(), SensorEventListener {
     override fun onSensorChanged(ev: SensorEvent?) {
         ev ?: return
         val counter = ev.values[0]
-        val nowMs   = System.currentTimeMillis()
-        val today   = todayStr(nowMs)
+        val nowMs = System.currentTimeMillis()
+        val today = todayStr(nowMs)
 
         if (lastCounter < 0f) {
             initOrFixOffset(counter, nowMs)
@@ -95,10 +89,10 @@ class StepTrackerService : Service(), SensorEventListener {
             return
         }
 
-        val prevDate = prefs.getString("prev_date", today)
+        val prevDate = db.getPrevDate() ?: today
         if (prevDate != today) {
             initOrFixOffset(counter, nowMs)
-            prefs.edit().putString("prev_date", today).apply()
+            db.setPrevDate(today)
         }
 
         val delta = counter - lastCounter
@@ -110,10 +104,8 @@ class StepTrackerService : Service(), SensorEventListener {
         saveHourly(today, hourStr(nowMs), delta)
 
         val stepsToday = counter - todayOffsetCounter
-        prefs.edit()
-            .putFloat(historyKey(today), stepsToday)
-            .putFloat("last_counter", counter)
-            .apply()
+        db.setStepsForDate(today, stepsToday)
+        db.setLastCounter(counter)
 
         broadcastAndNotify(stepsToday)
         lastCounter = counter
@@ -128,39 +120,30 @@ class StepTrackerService : Service(), SensorEventListener {
     }
 
     private fun saveHourly(date: String, hour: String, delta: Float) {
-        val key  = hourlyKey(date)
-        val json = JSONObject(prefs.getString(key, "{}") ?: "{}")
-        json.put(hour, json.optDouble(hour, 0.0) + delta)
-        prefs.edit().putString(key, json.toString()).apply()
+        db.insertOrUpdateHourly(date, hour.toInt(), delta.toInt())
     }
 
     private fun initOrFixOffset(counter: Float, timeMs: Long) {
         val today = todayStr(timeMs)
-        val key   = offsetKey(today)
-
-        val saved = prefs.getFloat(key, -1f)
+        val saved = db.getTodayOffset(today)
         if (saved < 0f) {
-            prefs.edit().putFloat(key, counter).apply()
+            db.setTodayOffset(today, counter)
             todayOffsetCounter = counter
         } else {
             if (counter > saved) {
                 val missed = counter - saved
-                val prev   = prefs.getFloat(historyKey(today), 0f)
-                prefs.edit()
-                    .putFloat(historyKey(today), prev + missed)
-                    .putFloat(key, counter)
-                    .apply()
+                val prev = db.getStepsForDate(today)
+                db.setStepsForDate(today, prev + missed)
+                db.setTodayOffset(today, counter)
             }
-            todayOffsetCounter = prefs.getFloat(key, counter)
+            todayOffsetCounter = db.getTodayOffset(today)
         }
     }
 
     private fun persistBaseState(counter: Float, timeMs: Long, date: String) {
-        prefs.edit()
-            .putString("prev_date", date)
-            .putFloat("last_counter", counter)
-            .putLong("last_counter_time", timeMs)
-            .apply()
+        db.setPrevDate(date)
+        db.setLastCounter(counter)
+        db.setLastCounterTime(timeMs)
     }
 
     private fun createNotificationChannel() {
@@ -176,8 +159,8 @@ class StepTrackerService : Service(), SensorEventListener {
         }
     }
 
-    private fun updateNotificationFromPrefs() {
-        val steps = prefs.getFloat(historyKey(todayStr()), 0f).toInt()
+    private fun updateNotificationFromDb() {
+        val steps = db.getStepsForDate(todayStr()).toInt()
         updateNotificationExternally(this, steps)
     }
 
@@ -186,8 +169,4 @@ class StepTrackerService : Service(), SensorEventListener {
 
     private fun hourStr(ms: Long) =
         SimpleDateFormat("HH", Locale.getDefault()).format(Date(ms))
-
-    private fun historyKey(date: String) = "history_$date"
-    private fun hourlyKey(date: String)  = "hourly_$date"
-    private fun offsetKey(date: String)  = "offset_$date"
 }
