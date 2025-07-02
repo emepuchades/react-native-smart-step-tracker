@@ -89,11 +89,13 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         val distanceD  = stepsD * STRIDE_METERS / 1_000
         val dailyGoal  = db.getConfigValue("daily_goal")?.toIntOrNull() ?: DAILY_GOAL_DEFAULT
         val progressD  = stepsD / dailyGoal * 100
+        val timeD      = stepsD / 98
 
         putDouble("steps", stepsD)
         putDouble("calories", caloriesD)
         putDouble("distance", distanceD)
         putDouble("progress", progressD)
+        putDouble("time", timeD)
     }
 
     @ReactMethod
@@ -114,6 +116,21 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
         WorkManager.getInstance(reactApplicationContext)
             .enqueueUniquePeriodicWork("step_sync", ExistingPeriodicWorkPolicy.KEEP, workRequest)
+    }
+
+    @ReactMethod
+        fun getWeeklySummary(promise: Promise) {
+            try {
+                val summary = db.getWeeklySummary()
+                val map = Arguments.createMap().apply {
+                    putInt("totalSteps", summary["totalSteps"] as Int)
+                    putInt("averageSteps", summary["averageSteps"] as Int)
+                    putInt("activeDays", summary["activeDays"] as Int)
+                }
+                promise.resolve(map)
+            } catch (e: Exception) {
+                promise.reject("ERROR_WEEKLY_SUMMARY", "No se pudo obtener el resumen semanal", e)
+            }
     }
 
     @ReactMethod

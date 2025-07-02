@@ -205,4 +205,34 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             arrayOf(date)
         )
     }
+
+    fun getWeeklySummary(): Map<String, Any> {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            """
+            SELECT date, steps FROM daily_history
+            ORDER BY date DESC
+            LIMIT 7
+            """.trimIndent(), null
+        )
+
+        var totalSteps = 0
+        var activeDays = 0
+
+        while (cursor.moveToNext()) {
+            val steps = cursor.getInt(cursor.getColumnIndexOrThrow("steps"))
+            totalSteps += steps
+            if (steps > 0) activeDays += 1
+        }
+        cursor.close()
+
+        val averageSteps = if (activeDays > 0) totalSteps / activeDays else 0
+
+        return mapOf(
+            "totalSteps" to totalSteps,
+            "averageSteps" to averageSteps,
+            "activeDays" to activeDays
+        )
+    }
+
 }
