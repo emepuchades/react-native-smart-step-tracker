@@ -5,6 +5,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.content.ContentValues
 import android.database.Cursor
+import java.text.SimpleDateFormat
+import java.util.*
 
 class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
     context,
@@ -15,7 +17,7 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         const val DATABASE_NAME = "steps.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -24,7 +26,8 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT UNIQUE,
                 steps INTEGER,
-                offset INTEGER
+                offset INTEGER,
+                goal INTEGER DEFAULT 10000
             );
         """)
 
@@ -46,10 +49,9 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS daily_history")
-        db.execSQL("DROP TABLE IF EXISTS hourly_history")
-        db.execSQL("DROP TABLE IF EXISTS config")
-        onCreate(db)
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE daily_history ADD COLUMN goal INTEGER DEFAULT 10000;")
+        }
     }
 
     fun setConfigValue(key: String, value: String) {
@@ -106,12 +108,33 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
         setConfigValue("last_counter_time", value.toString())
     }
 
-    fun insertOrUpdateDaily(date: String, steps: Int, offset: Int) {
+    fun getDailyGoal(): Int {
+        return getConfigValue("daily_goal")?.toIntOrNull() ?: 10000
+    }
+
+    fun setDailyGoal(goal: Int) {
+        setConfigValue("daily_goal", goal.toString())
+
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val values = ContentValues().apply {
+            put("goal", goal)
+        }
+
+        writableDatabase.update(
+            "daily_history",
+            values,
+            "date = ?",
+            arrayOf(today)
+        )
+    }
+
+    fun insertOrUpdateDaily(date: String, steps: Int, offset: Int, goal: Int) {
         val db = writableDatabase
         val values = ContentValues().apply {
             put("date", date)
             put("steps", steps)
             put("offset", offset)
+            put("goal", goal)
         }
         db.insertWithOnConflict(
             "daily_history",
@@ -136,7 +159,8 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     fun setStepsForDate(date: String, steps: Float) {
         val offset = getTodayOffset(date)
-        insertOrUpdateDaily(date, steps.toInt(), offset.toInt())
+        val goal = getDailyGoal()
+        insertOrUpdateDaily(date, steps.toInt(), offset.toInt(), goal)
     }
 
     fun getTodayOffset(date: String): Float {
@@ -157,7 +181,8 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
     fun setTodayOffset(date: String, offset: Float) {
         val steps = getStepsForDate(date)
-        insertOrUpdateDaily(date, steps.toInt(), offset.toInt())
+        val goal = getDailyGoal()
+        insertOrUpdateDaily(date, steps.toInt(), offset.toInt(), goal)
     }
 
     fun insertOrUpdateHourly(date: String, hour: Int, steps: Int) {
@@ -234,5 +259,4 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             "activeDays" to activeDays
         )
     }
-
 }

@@ -87,7 +87,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         val stepsD     = steps.toDouble()
         val caloriesD  = stepsD * KCAL_PER_STEP
         val distanceD  = stepsD * STRIDE_METERS / 1_000
-        val dailyGoal  = db.getConfigValue("daily_goal")?.toIntOrNull() ?: DAILY_GOAL_DEFAULT
+        val dailyGoal  = db.getDailyGoal()
         val progressD  = stepsD / dailyGoal * 100
         val timeD      = stepsD / 98
 
@@ -95,6 +95,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         putDouble("calories", caloriesD)
         putDouble("distance", distanceD)
         putDouble("progress", progressD)
+        putInt("dailyGoal", dailyGoal)
         putDouble("time", timeD)
     }
 
@@ -119,18 +120,38 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-        fun getWeeklySummary(promise: Promise) {
-            try {
-                val summary = db.getWeeklySummary()
-                val map = Arguments.createMap().apply {
-                    putInt("totalSteps", summary["totalSteps"] as Int)
-                    putInt("averageSteps", summary["averageSteps"] as Int)
-                    putInt("activeDays", summary["activeDays"] as Int)
-                }
-                promise.resolve(map)
-            } catch (e: Exception) {
-                promise.reject("ERROR_WEEKLY_SUMMARY", "No se pudo obtener el resumen semanal", e)
+    fun getWeeklySummary(promise: Promise) {
+        try {
+            val summary = db.getWeeklySummary()
+            val map = Arguments.createMap().apply {
+                putInt("totalSteps", summary["totalSteps"] as Int)
+                putInt("averageSteps", summary["averageSteps"] as Int)
+                putInt("activeDays", summary["activeDays"] as Int)
             }
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("ERROR_WEEKLY_SUMMARY", "No se pudo obtener el resumen semanal", e)
+        }
+    }
+
+    @ReactMethod
+    fun setDailyGoal(goal: Int, promise: Promise) {
+        try {
+            db.setDailyGoal(goal)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERROR_SET_DAILY_GOAL", "No se pudo actualizar el objetivo global", e)
+        }
+    }
+
+    @ReactMethod
+    fun getDailyGoal(promise: Promise) {
+        try {
+            val goal = db.getDailyGoal()
+            promise.resolve(goal)
+        } catch (e: Exception) {
+            promise.reject("ERROR_GET_DAILY_GOAL", "No se pudo obtener el objetivo global", e)
+        }
     }
 
     @ReactMethod
