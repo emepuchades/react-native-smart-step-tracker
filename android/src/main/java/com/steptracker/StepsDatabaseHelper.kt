@@ -243,8 +243,10 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
         var totalSteps = 0
         var activeDays = 0
+        var daysCount = 0
 
         while (cursor.moveToNext()) {
+            daysCount += 1
             val steps = cursor.getInt(cursor.getColumnIndexOrThrow("steps"))
             totalSteps += steps
             if (steps > 0) activeDays += 1
@@ -256,7 +258,29 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
         return mapOf(
             "totalSteps" to totalSteps,
             "averageSteps" to averageSteps,
-            "activeDays" to activeDays
+            "activeDays" to activeDays,
+            "daysCount" to daysCount
         )
+    }
+
+    fun getStreakCount(): Int {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT steps, goal FROM daily_history ORDER BY date DESC",
+            null
+        )
+
+        var streak = 0
+        while (cursor.moveToNext()) {
+            val steps = cursor.getInt(cursor.getColumnIndexOrThrow("steps"))
+            val goal = cursor.getInt(cursor.getColumnIndexOrThrow("goal"))
+            if (steps >= goal) {
+                streak += 1
+            } else {
+                break
+            }
+        }
+        cursor.close()
+        return streak
     }
 }

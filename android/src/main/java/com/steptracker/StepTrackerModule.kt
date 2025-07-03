@@ -127,6 +127,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
                 putInt("totalSteps", summary["totalSteps"] as Int)
                 putInt("averageSteps", summary["averageSteps"] as Int)
                 putInt("activeDays", summary["activeDays"] as Int)
+                putInt("daysCount", summary["daysCount"] as Int)
             }
             promise.resolve(map)
         } catch (e: Exception) {
@@ -151,6 +152,16 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             promise.resolve(goal)
         } catch (e: Exception) {
             promise.reject("ERROR_GET_DAILY_GOAL", "No se pudo obtener el objetivo global", e)
+        }
+    }
+
+    @ReactMethod
+    fun getStreakCount(promise: Promise) {
+        try {
+            val streak = db.getStreakCount()
+            promise.resolve(streak)
+        } catch (e: Exception) {
+            promise.reject("ERROR_STREAK", "No se pudo calcular la racha", e)
         }
     }
 
