@@ -166,6 +166,21 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun setUserLanguage(lang: String) {
+        db.setUserLanguage(lang)
+    }
+
+    @ReactMethod
+    fun getUserLanguage(promise: Promise) {
+        try {
+            val lang = db.getUserLanguage()
+            promise.resolve(lang)
+        } catch (e: Exception) {
+            promise.reject("ERROR_USER_LANGUAGE", "No se pudo obtener el idioma", e)
+        }
+    }
+
+    @ReactMethod
     fun addListener(eventName: String) {}
     @ReactMethod
     fun removeListeners(count: Int) {}

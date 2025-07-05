@@ -266,14 +266,23 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
     fun getStreakCount(): Int {
         val db = readableDatabase
         val cursor = db.rawQuery(
-            "SELECT steps, goal FROM daily_history ORDER BY date DESC",
+            "SELECT date, steps, goal FROM daily_history ORDER BY date DESC",
             null
         )
 
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
         var streak = 0
         while (cursor.moveToNext()) {
+            val date = cursor.getString(cursor.getColumnIndexOrThrow("date"))
+
+            if (date == today) {
+                continue
+            }
+
             val steps = cursor.getInt(cursor.getColumnIndexOrThrow("steps"))
             val goal = cursor.getInt(cursor.getColumnIndexOrThrow("goal"))
+
             if (steps >= goal) {
                 streak += 1
             } else {
@@ -282,5 +291,13 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
         }
         cursor.close()
         return streak
+    }
+
+    fun setUserLanguage(lang: String) {
+        setConfigValue("user_language", lang)
+    }
+
+    fun getUserLanguage(): String {
+        return getConfigValue("user_language") ?: "es"
     }
 }
