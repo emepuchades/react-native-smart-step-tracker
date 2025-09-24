@@ -166,6 +166,56 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun getDailyStats(date: String, promise: Promise) {
+        try {
+            val result = db.getDailyHourlyStatsForDate(date)
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("GET_DAILY_STATS_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getWeeklyProgress(promise: Promise) {
+        try {
+            val result = db.getWeeklyProgress()
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("ERROR_WEEKLY_PROGRESS", "No se pudo obtener el progreso semanal", e)
+        }
+    }
+
+    @ReactMethod
+    fun getWeeklyStats(promise: Promise) {
+        try {
+            val result = db.getWeeklyStats() // ← no le pasamos promise
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("GET_WEEKLY_STATS_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getMonthlyStats(promise: Promise) {
+        try {
+            val result = db.getMonthlyStats()
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("GET_MONTHLY_STATS_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getYearlyStats(promise: Promise) {
+        try {
+            val result = db.getYearlyStats()
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("GET_YEARLY_STATS_ERROR", e.message, e)
+        }
+    }
+
+    @ReactMethod
     fun setUserLanguage(lang: String) {
         db.setUserLanguage(lang)
     }
