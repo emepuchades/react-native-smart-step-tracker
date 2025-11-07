@@ -186,9 +186,9 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun getWeeklyStats(promise: Promise) {
+    fun getWeeklyStats(language: String, promise: Promise) {
         try {
-            val result = db.getWeeklyStats() // ← no le pasamos promise
+            val result = db.getWeeklyStats(language)
             promise.resolve(result)
         } catch (e: Exception) {
             promise.reject("GET_WEEKLY_STATS_ERROR", e.message, e)

@@ -7,6 +7,7 @@ import android.content.ContentValues
 import android.database.Cursor
 import com.facebook.react.bridge.*
 import java.text.SimpleDateFormat
+import java.text.NumberFormat
 import java.util.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -17,6 +18,8 @@ import java.time.format.TextStyle
 
 import java.time.DayOfWeek
 import java.util.Locale
+
+import java.time.temporal.TemporalAdjusters
 
 class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
     context,
@@ -273,10 +276,28 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             ((totalSteps - yesterdaySteps) * 100) / yesterdaySteps
         else 0
 
+        fun calcPercentage(today: Double, yesterday: Double): Double {
+            return if (yesterday > 0.0) ((today - yesterday) / yesterday) * 100.0 else 0.0
+        }
+
+        val yesterdayCursor = db.rawQuery(
+            "SELECT steps FROM daily_history WHERE date = date(?, '-1 day')",
+            arrayOf(date)
+        )
+
+        val yesterdayStepsStats = if (yesterdayCursor.moveToFirst()) {
+            yesterdayCursor.getInt(yesterdayCursor.getColumnIndexOrThrow("steps"))
+        } else 0
+        yesterdayCursor.close()
+
+        val totalDistanceYesterday = yesterdayStepsStats * 0.0008
+        val distanceDiff = calcPercentage(totalDistance, totalDistanceYesterday)
+
         return Arguments.createMap().apply {
             putArray("hours", resultArray)
             putInt("totalSteps", totalSteps)
             putDouble("totalDistance", totalDistance)
+            putDouble("distanceDiffPercent", distanceDiff)
             putDouble("totalCalories", totalCalories)
             putInt("activeMinutes", activeMinutes)
             putInt("stepsPerMinuteAvg", stepsPerMinuteAvg)
@@ -455,39 +476,48 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
     }
 
     @ReactMethod
-    fun getWeeklyStats(): WritableMap {
+    fun getWeeklyStats(language: String): WritableMap {
         val db = readableDatabase
-
         val today = LocalDate.now()
-        val startOfWeek = today.minusDays(6)
+
+        val isSpanish = language == "es"
+        val locale = if (isSpanish) Locale("es", "ES") else Locale("en", "US")
+        val firstDayOfWeek = if (isSpanish) DayOfWeek.MONDAY else DayOfWeek.SUNDAY
+        val startOfWeek = today.with(TemporalAdjusters.previousOrSame(firstDayOfWeek))
+        val orderedDays = (0..6).map { startOfWeek.plusDays(it.toLong()) }
 
         var totalSteps = 0
+        var activeMinutes = 0
         var mostSteps = 0
         var mostActiveDay = ""
-        var activeMinutes = 0
+        var daysGoalCompleted = 0
         val resultArray = Arguments.createArray()
 
-        val orderedDays = (0..6).map { startOfWeek.plusDays(it.toLong()) }
+        val dailyGoal = 5000
+        val weeklyGoal = dailyGoal * 7
+
+        // ⏬ Guardamos steps por día para luego calcular el mínimo real
+        val stepsByDay = mutableListOf<Pair<LocalDate, Int>>()
 
         for (date in orderedDays) {
             val dateStr = date.format(DateTimeFormatter.ISO_DATE)
             val cursor = db.rawQuery("SELECT steps FROM daily_history WHERE date = ?", arrayOf(dateStr))
-
             val steps = if (cursor.moveToFirst()) cursor.getInt(0) else 0
             cursor.close()
 
+            stepsByDay.add(Pair(date, steps)) // ⬅️ Guardamos para el mínimo después
+
             totalSteps += steps
+            if (steps > 0) activeMinutes += 60
             if (steps > mostSteps) {
                 mostSteps = steps
-                mostActiveDay = date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale("es", "ES"))
+                mostActiveDay = date.dayOfWeek.getDisplayName(TextStyle.FULL, locale)
             }
-
-            if (steps > 0) activeMinutes += 60
+            if (steps >= dailyGoal) daysGoalCompleted++
 
             val distance = steps * 0.0008
             val calories = steps * 0.04
-
-            val dayName = date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale("es", "ES"))
+            val dayName = date.dayOfWeek.getDisplayName(TextStyle.SHORT, locale)
             val isToday = date.isEqual(today)
             val dayNumber = date.dayOfMonth.toString()
 
@@ -499,42 +529,55 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 putDouble("distance", distance)
                 putDouble("calories", calories)
                 putInt("activeMinutes", if (steps > 0) 60 else 0)
+                putBoolean("goalCompleted", steps >= dailyGoal)
             }
 
             resultArray.pushMap(map)
         }
 
-        val goal = 35000
-        val goalCompleted = totalSteps >= goal
-        val totalDistance = totalSteps * 0.0008
-        val totalCalories = totalSteps * 0.04
-        val stepsPerMinuteAvg = if (activeMinutes > 0) totalSteps / activeMinutes else 0
+        // ✅ Calculamos el mínimo solo con días hasta hoy
+        val pastSteps = stepsByDay.filter { !it.first.isAfter(today) }
+        val leastEntry = pastSteps.minByOrNull { it.second }
 
-        // Mejora respecto a semana pasada
+        val leastSteps = leastEntry?.second ?: 0
+        val leastActiveDay = leastEntry?.first?.dayOfWeek?.getDisplayName(TextStyle.FULL, locale) ?: ""
+
+        fun formatNumberWithDots(number: Int): String {
+            val formatter = NumberFormat.getInstance(locale)
+            return formatter.format(number)
+        }
+
         val prevStart = startOfWeek.minusDays(7)
         val prevEnd = startOfWeek.minusDays(1)
         val prevSteps = db.rawQuery(
             "SELECT SUM(steps) FROM daily_history WHERE date BETWEEN ? AND ?",
             arrayOf(prevStart.toString(), prevEnd.toString())
-        ).use {
-            if (it.moveToFirst()) it.getInt(0) else 0
-        }
+        ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
-        val improvement = if (prevSteps > 0) ((totalSteps - prevSteps) * 100) / prevSteps else 0
+        val stepDifference = totalSteps - prevSteps
+        val improvement = if (prevSteps > 0) ((stepDifference * 100) / prevSteps) else 0
 
         return Arguments.createMap().apply {
-            putInt("goal", goal)
+            putInt("goal", weeklyGoal)
             putInt("totalSteps", totalSteps)
-            putDouble("totalDistance", totalDistance)
-            putDouble("totalCalories", totalCalories)
+            putDouble("totalDistance", totalSteps * 0.0008)
+            putDouble("totalCalories", totalSteps * 0.04)
             putInt("activeMinutes", activeMinutes)
-            putInt("stepsPerMinuteAvg", stepsPerMinuteAvg)
-            putBoolean("goalCompleted", goalCompleted)
+            putInt("stepsPerMinuteAvg", if (activeMinutes > 0) totalSteps / activeMinutes else 0)
+            putBoolean("goalCompleted", totalSteps >= weeklyGoal)
             putString("mostActiveDay", mostActiveDay)
-            putInt("improvement", improvement)
+            putString("leastActiveDay", leastActiveDay)
+            putInt("mostSteps", mostSteps)
+            putInt("leastSteps", leastSteps)
+            putString("stepsRange", "${formatNumberWithDots(leastSteps)} - ${formatNumberWithDots(mostSteps)}")
+            putInt("daysGoalCompleted", daysGoalCompleted)
+            putInt("totalDays", orderedDays.size) // Los 7 días para que la gráfica no se rompa
+            putInt("improvementPercent", improvement)
+            putInt("stepDifference", stepDifference)
             putArray("days", resultArray)
         }
     }
+
 
     private fun roundTo1Decimal(value: Double): Double {
         return String.format("%.1f", value).replace(",", ".").toDouble()
