@@ -476,9 +476,9 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
     }
 
     @ReactMethod
-    fun getWeeklyStats(language: String): WritableMap {
+    fun getWeeklyStats(language: String, offset: Int = 0): WritableMap {
         val db = readableDatabase
-        val today = LocalDate.now()
+        val today = LocalDate.now().plusWeeks(offset.toLong())
 
         val isSpanish = language == "es"
         val locale = if (isSpanish) Locale("es", "ES") else Locale("en", "US")
@@ -496,7 +496,6 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val dailyGoal = 5000
         val weeklyGoal = dailyGoal * 7
 
-        // ⏬ Guardamos steps por día para luego calcular el mínimo real
         val stepsByDay = mutableListOf<Pair<LocalDate, Int>>()
 
         for (date in orderedDays) {
@@ -588,35 +587,50 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
     }
 
     @ReactMethod
-    fun getMonthlyStats(): WritableMap {
+    fun getMonthlyStats(language: String, offset: Int = 0): WritableMap {
         val db = readableDatabase
-
         val today = LocalDate.now()
-        val startOfMonth = today.withDayOfMonth(1)
-        val endOfMonth = today.withDayOfMonth(today.lengthOfMonth())
+        val targetMonth = today.plusMonths(offset.toLong())
+        val startOfMonth = targetMonth.withDayOfMonth(1)
+        val locale = if (language == "es") Locale("es", "ES") else Locale("en", "US")
 
         var totalSteps = 0
+        var activeMinutes = 0
         var mostSteps = 0
         var mostActiveDay = ""
-        var activeMinutes = 0
+        var leastSteps = Int.MAX_VALUE
+        var leastActiveDay = ""
+        var daysGoalCompleted = 0
         val resultArray = Arguments.createArray()
+        val stepsByDay = mutableListOf<Pair<LocalDate, Int>>()
 
-        for (day in 1..today.lengthOfMonth()) {
+        val dailyGoal = 5000
+        val monthLength = targetMonth.lengthOfMonth()
+        val isCurrentMonth = offset == 0
+
+        for (day in 1..monthLength) {
             val date = startOfMonth.withDayOfMonth(day)
             val dateStr = date.format(DateTimeFormatter.ISO_DATE)
             val cursor = db.rawQuery("SELECT steps FROM daily_history WHERE date = ?", arrayOf(dateStr))
-
             val steps = if (cursor.moveToFirst()) cursor.getInt(0) else 0
             cursor.close()
 
+            stepsByDay.add(Pair(date, steps))
             totalSteps += steps
+            if (steps > 0) activeMinutes += 60
+            if (steps >= dailyGoal) daysGoalCompleted++
+
             if (steps > mostSteps) {
                 mostSteps = steps
-                val dow = date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale("es", "ES"))
-                mostActiveDay = "$dow ${day}"
+                val dow = date.dayOfWeek.getDisplayName(TextStyle.FULL, locale)
+                mostActiveDay = "$dow $day"
             }
 
-            if (steps > 0) activeMinutes += 60
+            // ❗️No contar días futuros para el mínimo
+            if (!date.isAfter(today) && steps < leastSteps) {
+                leastSteps = steps
+                leastActiveDay = date.dayOfWeek.getDisplayName(TextStyle.FULL, locale) + " $day"
+            }
 
             val distance = steps * 0.0008
             val calories = steps * 0.04
@@ -629,28 +643,33 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 putDouble("distance", distance)
                 putDouble("calories", calories)
                 putInt("activeMinutes", if (steps > 0) 60 else 0)
+                putBoolean("goalCompleted", steps >= dailyGoal)
             }
 
             resultArray.pushMap(map)
         }
 
-        val goal = 150000
-        val goalCompleted = totalSteps >= goal
         val totalDistance = totalSteps * 0.0008
         val totalCalories = totalSteps * 0.04
         val stepsPerMinuteAvg = if (activeMinutes > 0) totalSteps / activeMinutes else 0
+        val goal = 150000
+        val goalCompleted = totalSteps >= goal
 
-        // Mejora respecto al mes pasado
-        val prevMonthStart = startOfMonth.minusMonths(1).withDayOfMonth(1)
-        val prevMonthEnd = prevMonthStart.withDayOfMonth(prevMonthStart.lengthOfMonth())
+        // 📊 Calcular comparación con el mismo rango del mes anterior
+        val prevMonthStart = startOfMonth.minusMonths(1)
+        val prevMonthEnd = prevMonthStart.plusDays(
+            (if (isCurrentMonth) today.dayOfMonth else targetMonth.lengthOfMonth()).toLong() - 1
+        )
+
         val prevSteps = db.rawQuery(
             "SELECT SUM(steps) FROM daily_history WHERE date BETWEEN ? AND ?",
             arrayOf(prevMonthStart.toString(), prevMonthEnd.toString())
-        ).use {
-            if (it.moveToFirst()) it.getInt(0) else 0
-        }
+        ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
-        val improvement = if (prevSteps > 0) ((totalSteps - prevSteps) * 100) / prevSteps else 0
+        val stepDifference = totalSteps - prevSteps
+        val improvement = if (prevSteps > 0) ((stepDifference * 100) / prevSteps) else 0
+
+        val stepsRange = "${if (leastSteps == Int.MAX_VALUE) 0 else leastSteps} - $mostSteps"
 
         return Arguments.createMap().apply {
             putInt("goal", goal)
@@ -661,23 +680,26 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             putInt("stepsPerMinuteAvg", stepsPerMinuteAvg)
             putBoolean("goalCompleted", goalCompleted)
             putString("mostActiveDay", mostActiveDay)
-            putInt("improvement", improvement)
+            putString("leastActiveDay", leastActiveDay)
+            putInt("mostSteps", mostSteps)
+            putInt("leastSteps", if (leastSteps == Int.MAX_VALUE) 0 else leastSteps)
+            putString("stepsRange", stepsRange)
+            putInt("daysGoalCompleted", daysGoalCompleted)
+            putInt("totalDays", monthLength)
+            putInt("improvementPercent", improvement)
+            putInt("stepDifference", stepDifference)
             putArray("days", resultArray)
         }
     }
 
-
-    fun getYearlyStats(): WritableMap {
+    @ReactMethod
+    fun getYearlyStats(language: String, offset: Int = 0): WritableMap {
         val db = readableDatabase
         val today = LocalDate.now()
-        val year = today.year
+        val targetYear = today.year + offset
+        val isCurrentYear = offset == 0
 
-        var totalSteps = 0
-        var mostSteps = 0
-        var mostActiveMonth = ""
-        var activeMinutes = 0
-        val monthsArray = Arguments.createArray()
-
+        val locale = if (language == "es") Locale("es", "ES") else Locale("en", "US")
         val shortMonths = listOf(
             "Ene", "Feb", "Mar", "Abr", "May", "Jun",
             "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"
@@ -686,10 +708,29 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
             "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
         )
+        val fullMonthsEn = listOf(
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        )
+
+        var totalSteps = 0
+        var activeMinutes = 0
+        var mostSteps = 0
+        var mostActiveMonth = ""
+        var leastSteps = Int.MAX_VALUE
+        var leastActiveMonth = ""
+        var monthsGoalCompleted = 0
+        val resultArray = Arguments.createArray()
+
+        val monthlyGoal = 150000
+        val goal = monthlyGoal * 12
 
         for (month in 1..12) {
-            val startOfMonth = LocalDate.of(year, month, 1)
+            val startOfMonth = LocalDate.of(targetYear, month, 1)
             val endOfMonth = startOfMonth.withDayOfMonth(startOfMonth.lengthOfMonth())
+
+            // Ignorar meses futuros si es el año actual
+            if (isCurrentYear && startOfMonth.isAfter(today)) continue
 
             val cursor = db.rawQuery(
                 "SELECT SUM(steps) FROM daily_history WHERE date BETWEEN ? AND ?",
@@ -700,43 +741,55 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             cursor.close()
 
             totalSteps += steps
+            if (steps > 0) activeMinutes += startOfMonth.lengthOfMonth() * 60
+            if (steps >= monthlyGoal) monthsGoalCompleted++
+
             if (steps > mostSteps) {
                 mostSteps = steps
-                mostActiveMonth = fullMonths[month - 1]
+                mostActiveMonth = if (language == "es") fullMonths[month - 1] else fullMonthsEn[month - 1]
             }
-            if (steps > 0) activeMinutes += startOfMonth.lengthOfMonth() * 60
+
+            if (steps < leastSteps) {
+                leastSteps = steps
+                leastActiveMonth = if (language == "es") fullMonths[month - 1] else fullMonthsEn[month - 1]
+            }
 
             val distance = steps * 0.0008
             val calories = steps * 0.04
 
             val monthMap = Arguments.createMap().apply {
                 putString("month", shortMonths[month - 1])
-                putString("fullMonth", fullMonths[month - 1])
+                putString("fullMonth", if (language == "es") fullMonths[month - 1] else fullMonthsEn[month - 1])
                 putInt("steps", steps)
                 putDouble("distance", distance)
                 putDouble("calories", calories)
+                putBoolean("goalCompleted", steps >= monthlyGoal)
             }
 
-            monthsArray.pushMap(monthMap)
+            resultArray.pushMap(monthMap)
         }
 
-        val goal = 1800000
-        val goalCompleted = totalSteps >= goal
         val totalDistance = totalSteps * 0.0008
         val totalCalories = totalSteps * 0.04
         val stepsPerMinuteAvg = if (activeMinutes > 0) totalSteps / activeMinutes else 0
+        val goalCompleted = totalSteps >= goal
 
-        // Mejora respecto al año anterior
-        val lastYearStart = LocalDate.of(year - 1, 1, 1)
-        val lastYearEnd = LocalDate.of(year - 1, 12, 31)
+        // 🧮 Comparación con el año anterior, solo hasta el mes actual
+        val monthsToCompare = if (isCurrentYear) today.monthValue else 12
+        val prevYearStart = LocalDate.of(targetYear - 1, 1, 1)
+        val prevYearEnd = prevYearStart.withMonth(monthsToCompare).withDayOfMonth(
+            LocalDate.of(targetYear - 1, monthsToCompare, 1).lengthOfMonth()
+        )
+
         val prevSteps = db.rawQuery(
             "SELECT SUM(steps) FROM daily_history WHERE date BETWEEN ? AND ?",
-            arrayOf(lastYearStart.toString(), lastYearEnd.toString())
-        ).use {
-            if (it.moveToFirst()) it.getInt(0) else 0
-        }
+            arrayOf(prevYearStart.toString(), prevYearEnd.toString())
+        ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
-        val improvement = if (prevSteps > 0) ((totalSteps - prevSteps) * 100) / prevSteps else 0
+        val stepDifference = totalSteps - prevSteps
+        val improvement = if (prevSteps > 0) ((stepDifference * 100) / prevSteps) else 0
+
+        val stepsRange = "${if (leastSteps == Int.MAX_VALUE) 0 else leastSteps} - $mostSteps"
 
         return Arguments.createMap().apply {
             putInt("goal", goal)
@@ -747,10 +800,18 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             putInt("stepsPerMinuteAvg", stepsPerMinuteAvg)
             putBoolean("goalCompleted", goalCompleted)
             putString("mostActiveMonth", mostActiveMonth)
-            putInt("improvement", improvement)
-            putArray("months", monthsArray)
+            putString("leastActiveMonth", leastActiveMonth)
+            putInt("mostSteps", mostSteps)
+            putInt("leastSteps", if (leastSteps == Int.MAX_VALUE) 0 else leastSteps)
+            putString("stepsRange", stepsRange)
+            putInt("monthsGoalCompleted", monthsGoalCompleted)
+            putInt("totalMonths", monthsToCompare)
+            putInt("improvementPercent", improvement)
+            putInt("stepDifference", stepDifference)
+            putArray("months", resultArray)
         }
     }
+
 
     fun setUserLanguage(lang: String) {
         setConfigValue("user_language", lang)

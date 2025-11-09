@@ -186,9 +186,9 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun getWeeklyStats(language: String, promise: Promise) {
+    fun getWeeklyStats(language: String, offset: Int, promise: Promise) {
         try {
-            val result = db.getWeeklyStats(language)
+            val result = db.getWeeklyStats(language, offset)
             promise.resolve(result)
         } catch (e: Exception) {
             promise.reject("GET_WEEKLY_STATS_ERROR", e.message, e)
@@ -196,9 +196,9 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun getMonthlyStats(promise: Promise) {
+    fun getMonthlyStats(language: String, offset: Int, promise: Promise) {
         try {
-            val result = db.getMonthlyStats()
+            val result = db.getMonthlyStats(language, offset)
             promise.resolve(result)
         } catch (e: Exception) {
             promise.reject("GET_MONTHLY_STATS_ERROR", e.message, e)
@@ -206,9 +206,9 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun getYearlyStats(promise: Promise) {
+    fun getYearlyStats(language: String, offset: Int, promise: Promise)  {
         try {
-            val result = db.getYearlyStats()
+            val result = db.getYearlyStats(language, offset)
             promise.resolve(result)
         } catch (e: Exception) {
             promise.reject("GET_YEARLY_STATS_ERROR", e.message, e)
