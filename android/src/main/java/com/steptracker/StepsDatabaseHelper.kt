@@ -480,7 +480,7 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val firstDayOfWeek = if (isSpanish) DayOfWeek.MONDAY else DayOfWeek.SUNDAY
         val today = LocalDate.now()
 
-        val dayOfWeekValue = today.dayOfWeek.value 
+        val dayOfWeekValue = today.dayOfWeek.value
         val shift = if (isSpanish) dayOfWeekValue - 1 else if (dayOfWeekValue == 7) 0 else dayOfWeekValue
         val currentWeekStart = today.minusDays(shift.toLong())
 
@@ -535,9 +535,20 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             resultArray.pushMap(map)
         }
 
-        val leastEntry = stepsByDay.minByOrNull { it.second }
+        val stepsForRange: List<Pair<LocalDate, Int>> =
+            if (offset == 0) {
+                stepsByDay.filter { !it.first.isAfter(today) }
+            } else {
+                stepsByDay
+            }
+
+        val leastEntry = stepsForRange.minByOrNull { it.second }
         val leastSteps = leastEntry?.second ?: 0
-        val leastActiveDay = leastEntry?.first?.dayOfWeek?.getDisplayName(TextStyle.FULL, locale) ?: ""
+        val leastActiveDay = leastEntry
+            ?.first
+            ?.dayOfWeek
+            ?.getDisplayName(TextStyle.FULL, locale)
+            ?: ""
 
         fun formatNumberWithDots(number: Int): String {
             val formatter = NumberFormat.getInstance(locale)
@@ -740,7 +751,6 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             val startOfMonth = LocalDate.of(targetYear, month, 1)
             val endOfMonth = startOfMonth.withDayOfMonth(startOfMonth.lengthOfMonth())
 
-            if (isCurrentYear && startOfMonth.isAfter(today)) continue
 
             val cursor = db.rawQuery(
                 "SELECT SUM(steps) FROM daily_history WHERE date BETWEEN ? AND ?",
@@ -757,14 +767,12 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
             if (steps > mostSteps) {
                 mostSteps = steps
-                mostActiveMonth =
-                    if (language == "es") fullMonthsEs[month - 1] else fullMonthsEn[month - 1]
+                mostActiveMonth = if (language == "es") fullMonthsEs[month - 1] else fullMonthsEn[month - 1]
             }
 
             if (steps > 0 && steps < leastSteps) {
                 leastSteps = steps
-                leastActiveMonth =
-                    if (language == "es") fullMonthsEs[month - 1] else fullMonthsEn[month - 1]
+                leastActiveMonth = if (language == "es") fullMonthsEs[month - 1] else fullMonthsEn[month - 1]
             }
 
             val dailyCursor = db.rawQuery(
@@ -778,19 +786,16 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             val distance = steps * 0.0008
             val calories = steps * 0.04
 
-            val monthMap = Arguments.createMap().apply {
+            val map = Arguments.createMap().apply {
                 putString("month", shortMonths[month - 1])
-                putString(
-                    "fullMonth",
-                    if (language == "es") fullMonthsEs[month - 1] else fullMonthsEn[month - 1]
-                )
+                putString("fullMonth", if (language == "es") fullMonthsEs[month - 1] else fullMonthsEn[month - 1])
                 putInt("steps", steps)
                 putDouble("distance", distance)
                 putDouble("calories", calories)
                 putBoolean("goalCompleted", steps >= monthlyGoal)
             }
 
-            resultArray.pushMap(monthMap)
+            resultArray.pushMap(map)
         }
 
         val totalDistance = totalSteps * 0.0008
@@ -811,15 +816,13 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
         val stepDifference = totalSteps - prevSteps
         val improvementPercent = if (prevSteps > 0) {
-            ((stepDifference.toDouble() / prevSteps.toDouble()) * 100.0)
-        } else {
-            0.0
-        }
+            (stepDifference.toDouble() / prevSteps.toDouble()) * 100.0
+        } else 0.0
 
         val validLeastSteps = if (monthsWithActivity.isNotEmpty()) leastSteps else 0
         val stepsRange = "$validLeastSteps - $mostSteps"
 
-        val totalDays = if (isCurrentYear) today.dayOfYear else if (Year.isLeap(targetYear.toLong())) 366 else 365
+        val totalDays = if (isCurrentYear) today.dayOfYear else (if (Year.isLeap(targetYear.toLong())) 366 else 365)
 
         return Arguments.createMap().apply {
             putInt("goal", goal)
