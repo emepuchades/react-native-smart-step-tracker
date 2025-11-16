@@ -511,10 +511,14 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
             stepsByDay.add(Pair(date, steps))
             totalSteps += steps
             if (steps > 0) activeMinutes += 60
+
             if (steps > mostSteps) {
                 mostSteps = steps
-                mostActiveDay = date.dayOfWeek.getDisplayName(TextStyle.FULL, locale)
+                mostActiveDay = capitalizeFirst(
+                    date.dayOfWeek.getDisplayName(TextStyle.FULL, locale)
+                )
             }
+
             if (steps >= dailyGoal) daysGoalCompleted++
 
             val distance = steps * 0.0008
@@ -532,6 +536,7 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
                 putInt("activeMinutes", if (steps > 0) 60 else 0)
                 putBoolean("goalCompleted", steps >= dailyGoal)
             }
+
             resultArray.pushMap(map)
         }
 
@@ -544,10 +549,12 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
         val leastEntry = stepsForRange.minByOrNull { it.second }
         val leastSteps = leastEntry?.second ?: 0
+
         val leastActiveDay = leastEntry
             ?.first
             ?.dayOfWeek
             ?.getDisplayName(TextStyle.FULL, locale)
+            ?.let { capitalizeFirst(it) }
             ?: ""
 
         fun formatNumberWithDots(number: Int): String {
@@ -600,7 +607,32 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
     private fun roundTo2Decimals(value: Double): Double {
         return String.format("%.2f", value).replace(",", ".").toDouble()
     }
+    private fun getEnglishOrdinal(day: Int): String {
+        if (day in 11..13) return "${day}th"
+        return when (day % 10) {
+            1 -> "${day}st"
+            2 -> "${day}nd"
+            3 -> "${day}rd"
+            else -> "${day}th"
+        }
+    }
+    private fun capitalizeFirst(text: String): String {
+        return text.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
 
+    private fun formatDayName(date: LocalDate, language: String): String {
+        val locale = if (language == "es") Locale("es", "ES") else Locale("en", "US")
+        val dayName = date.dayOfWeek.getDisplayName(TextStyle.FULL, locale)
+        val capitalizedName = capitalizeFirst(dayName)
+        val dayOfMonth = date.dayOfMonth
+
+        return if (language == "es") {
+            "$capitalizedName $dayOfMonth"
+        } else {
+            "$capitalizedName ${getEnglishOrdinal(dayOfMonth)}"
+        }
+    }
+    
     @ReactMethod
     fun getMonthlyStats(language: String, offset: Int = 0): WritableMap {
         val db = readableDatabase
@@ -623,6 +655,11 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val monthLength = targetMonth.lengthOfMonth()
         val isCurrentMonth = offset == 0
 
+        fun formatNumberWithDots(number: Int): String {
+            val formatter = NumberFormat.getInstance(locale)
+            return formatter.format(number)
+        }
+
         for (day in 1..monthLength) {
             val date = startOfMonth.withDayOfMonth(day)
             val dateStr = date.format(DateTimeFormatter.ISO_DATE)
@@ -637,13 +674,12 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
             if (steps > mostSteps) {
                 mostSteps = steps
-                val dow = date.dayOfWeek.getDisplayName(TextStyle.FULL, locale)
-                mostActiveDay = "$dow $day"
+                mostActiveDay = formatDayName(date, language)
             }
 
             if (!date.isAfter(today) && steps < leastSteps) {
                 leastSteps = steps
-                leastActiveDay = date.dayOfWeek.getDisplayName(TextStyle.FULL, locale) + " $day"
+                leastActiveDay = formatDayName(date, language)
             }
 
             val distance = steps * 0.0008
@@ -683,11 +719,10 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
         val stepDifference = totalSteps - prevSteps
         val improvementPercent = if (prevSteps > 0) {
             ((stepDifference.toDouble() / prevSteps.toDouble()) * 100.0)
-        } else {
-            0.0
-        }
+        } else 0.0
 
-        val stepsRange = "${if (leastSteps == Int.MAX_VALUE) 0 else leastSteps} - $mostSteps"
+        val formattedLeast = if (leastSteps == Int.MAX_VALUE) 0 else leastSteps
+        val stepsRange = "${formatNumberWithDots(formattedLeast)} - ${formatNumberWithDots(mostSteps)}"
 
         return Arguments.createMap().apply {
             putInt("goal", goal)
@@ -747,10 +782,14 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
 
         val monthsWithActivity = mutableListOf<Pair<Int, Int>>()
 
+        fun formatNumberWithDots(number: Int): String {
+            val formatter = NumberFormat.getInstance(locale)
+            return formatter.format(number)
+        }
+
         for (month in 1..12) {
             val startOfMonth = LocalDate.of(targetYear, month, 1)
             val endOfMonth = startOfMonth.withDayOfMonth(startOfMonth.lengthOfMonth())
-
 
             val cursor = db.rawQuery(
                 "SELECT SUM(steps) FROM daily_history WHERE date BETWEEN ? AND ?",
@@ -820,7 +859,9 @@ class StepsDatabaseHelper(context: Context) : SQLiteOpenHelper(
         } else 0.0
 
         val validLeastSteps = if (monthsWithActivity.isNotEmpty()) leastSteps else 0
-        val stepsRange = "$validLeastSteps - $mostSteps"
+
+        val stepsRange =
+            "${formatNumberWithDots(validLeastSteps)} - ${formatNumberWithDots(mostSteps)}"
 
         val totalDays = if (isCurrentYear) today.dayOfYear else (if (Year.isLeap(targetYear.toLong())) 366 else 365)
 
