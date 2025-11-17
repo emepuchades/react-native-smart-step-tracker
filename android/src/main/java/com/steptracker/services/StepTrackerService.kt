@@ -9,7 +9,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import com.steptracker.data.StepsDatabaseHelper
+import com.steptracker.data.steps.*
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -27,7 +27,7 @@ class StepTrackerService : Service(), SensorEventListener {
             mgr.notify(NOTIF_ID, buildBaseNotification(ctx, steps))
         }
 
-        private fun buildBaseNotification(ctx: Context, steps: Int) =
+        private fun buildBaseNotification(ctx: Context, steps: Int): Notification =
             NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("Contando pasos")
@@ -38,12 +38,18 @@ class StepTrackerService : Service(), SensorEventListener {
                 .build()
     }
 
+    // Repos
+    private val dbHelper by lazy { StepsDatabaseHelper(this) }
+    private val db by lazy { dbHelper.writableDatabase }
+
+    private val configRepo by lazy { ConfigRepository(db) }
+    private val historyRepo by lazy { StepHistoryRepository(db, configRepo) }
+
     private val sensorManager by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
     private val stepSensor by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
-    private val db by lazy { StepsDatabaseHelper(this) }
 
     private var lastCounter = -1f
-    private var todayOffsetCounter = -1f
+    private var todayOffsetCounter: Int = -1
 
     override fun onCreate() {
         super.onCreate()
@@ -51,15 +57,18 @@ class StepTrackerService : Service(), SensorEventListener {
         createNotificationChannel()
         startForeground(NOTIF_ID, buildBaseNotification(this, 0))
 
-        lastCounter = db.getLastCounter()
-        todayOffsetCounter = db.getTodayOffset(todayStr())
+        lastCounter = configRepo.get("last_counter")?.toFloatOrNull() ?: -1f
+        todayOffsetCounter = historyRepo.getTodayOffset(todayStr())
 
-        stepSensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+        stepSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
+
         updateNotificationFromDb()
     }
 
     override fun onDestroy() {
-        db.setLastCounter(lastCounter)
+        configRepo.set("last_counter", lastCounter.toString())
         sensorManager.unregisterListener(this)
         stopForeground(true)
         super.onDestroy()
@@ -75,24 +84,24 @@ class StepTrackerService : Service(), SensorEventListener {
 
         if (lastCounter < 0f) {
             initOrFixOffset(counter, nowMs)
-            persistBaseState(counter, nowMs, today)
-            broadcastAndNotify(counter - todayOffsetCounter)
+            persistState(counter, nowMs, today)
+            broadcastAndNotify((counter - todayOffsetCounter).toInt())
             lastCounter = counter
             return
         }
 
         if (counter < lastCounter) {
             initOrFixOffset(counter, nowMs)
-            persistBaseState(counter, nowMs, today)
-            broadcastAndNotify(0f)
+            persistState(counter, nowMs, today)
+            broadcastAndNotify(0)
             lastCounter = counter
             return
         }
 
-        val prevDate = db.getPrevDate() ?: today
+        val prevDate = configRepo.get("prev_date") ?: today
         if (prevDate != today) {
             initOrFixOffset(counter, nowMs)
-            db.setPrevDate(today)
+            configRepo.set("prev_date", today)
         }
 
         val delta = counter - lastCounter
@@ -103,47 +112,48 @@ class StepTrackerService : Service(), SensorEventListener {
 
         saveHourly(today, hourStr(nowMs), delta)
 
-        val stepsToday = counter - todayOffsetCounter
-        db.setStepsForDate(today, stepsToday)
-        db.setLastCounter(counter)
+        val stepsToday = (counter - todayOffsetCounter)
+        historyRepo.setStepsForDate(today, stepsToday.toInt())
+        configRepo.set("last_counter", counter.toString())
 
-        broadcastAndNotify(stepsToday)
+        broadcastAndNotify(stepsToday.toInt())
         lastCounter = counter
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    private fun broadcastAndNotify(steps: Float) {
-        val i = Intent(ACTION_STEPS_UPDATE).putExtra(EXTRA_STEPS, steps.toInt())
-        sendBroadcast(i)
-        updateNotificationExternally(this, steps.toInt())
+    private fun broadcastAndNotify(steps: Int) {
+        val intent = Intent(ACTION_STEPS_UPDATE).putExtra(EXTRA_STEPS, steps)
+        sendBroadcast(intent)
+        updateNotificationExternally(this, steps)
     }
 
     private fun saveHourly(date: String, hour: String, delta: Float) {
-        db.insertOrUpdateHourly(date, hour.toInt(), delta.toInt())
+        historyRepo.insertOrUpdateHourly(date, hour.toInt(), delta.toInt())
     }
 
     private fun initOrFixOffset(counter: Float, timeMs: Long) {
         val today = todayStr(timeMs)
-        val saved = db.getTodayOffset(today)
-        if (saved < 0f) {
-            db.setTodayOffset(today, counter)
-            todayOffsetCounter = counter
+        val saved = historyRepo.getTodayOffset(today)
+
+        if (saved < 0) {
+            historyRepo.setTodayOffset(today, counter.toInt())
+            todayOffsetCounter = counter.toInt()
         } else {
             if (counter > saved) {
-                val missed = counter - saved
-                val prev = db.getStepsForDate(today)
-                db.setStepsForDate(today, prev + missed)
-                db.setTodayOffset(today, counter)
+                val missed = (counter - saved)
+                val prev = historyRepo.getStepsForDate(today)
+                historyRepo.setStepsForDate(today, (prev + missed).toInt())
+                historyRepo.setTodayOffset(today, counter.toInt())
             }
-            todayOffsetCounter = db.getTodayOffset(today)
+            todayOffsetCounter = historyRepo.getTodayOffset(today)
         }
     }
 
-    private fun persistBaseState(counter: Float, timeMs: Long, date: String) {
-        db.setPrevDate(date)
-        db.setLastCounter(counter)
-        db.setLastCounterTime(timeMs)
+    private fun persistState(counter: Float, timeMs: Long, date: String) {
+        configRepo.set("prev_date", date)
+        configRepo.set("last_counter", counter.toString())
+        configRepo.set("last_counter_time", timeMs.toString())
     }
 
     private fun createNotificationChannel() {
@@ -160,7 +170,7 @@ class StepTrackerService : Service(), SensorEventListener {
     }
 
     private fun updateNotificationFromDb() {
-        val steps = db.getStepsForDate(todayStr()).toInt()
+        val steps = historyRepo.getStepsForDate(todayStr())
         updateNotificationExternally(this, steps)
     }
 
