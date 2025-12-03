@@ -1,12 +1,21 @@
-package com.steptracker
+package com.steptracker.bridge
 
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.facebook.react.bridge.*
-import com.steptracker.data.steps.*
-import androidx.work.*
+import com.steptracker.StepSyncWorker
+import com.steptracker.StepTrackerService
+import com.steptracker.data.steps.ConfigRepository
+import com.steptracker.data.steps.StepHistoryRepository
+import com.steptracker.data.steps.StepStatsRepository
+import com.steptracker.data.steps.StepsDatabaseHelper
+import com.steptracker.data.steps.UserPreferencesManager
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class StepTrackerModule(private val reactContext: ReactApplicationContext) :
@@ -14,16 +23,21 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
     override fun getName() = "StepTrackerModule"
 
-    // DEPENDENCIAS
+    companion object {
+        private const val METERS_PER_STEP = 0.8
+        private const val KM_TO_MILES = 0.621371
+        private const val KCAL_PER_STEP = 0.04
+        private const val KCAL_TO_KJ = 4.184
+    }
+
     private val dbHelper = StepsDatabaseHelper(reactContext)
     private val db = dbHelper.writableDatabase
 
     private val configRepo = ConfigRepository(db)
     private val prefsManager = UserPreferencesManager(configRepo)
     private val historyRepo = StepHistoryRepository(db, configRepo)
-    private val statsRepo = StepStatsRepository(db, prefsManager)
+    private val statsRepo = StepStatsRepository(db, prefsManager, historyRepo)
 
-    // BACKGROUND SERVICE
     @ReactMethod
     fun startTracking() {
         val intent = Intent(reactContext, StepTrackerService::class.java)
@@ -45,7 +59,6 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         ContextCompat.startForegroundService(reactContext, intent)
     }
 
-    // BASIC STATS
     @ReactMethod
     fun getTodayStats(promise: Promise) {
         try {
@@ -53,20 +66,23 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             val steps = historyRepo.getStepsForDate(today)
             promise.resolve(buildBasicStatsMap(steps))
         } catch (e: Exception) {
-            promise.reject("ERROR_TODAY_STATS", "No se pudieron obtener los datos de hoy", e)
+            promise.reject("ERROR_TODAY_STATS", e)
         }
     }
 
     private fun buildBasicStatsMap(steps: Int): WritableMap = Arguments.createMap().apply {
         val stepsD = steps.toDouble()
-        val distance = stepsD * 0.78 / 1000
-        val calories = stepsD * 0.04
         val goal = historyRepo.getDailyGoal()
 
+        val (distVal, distUnit) = computeDistance(steps)
+        val (energyVal, energyUnit) = computeEnergy(steps)
+
         putDouble("steps", stepsD)
-        putDouble("calories", calories)
-        putDouble("distance", distance)
-        putDouble("progress", (stepsD / goal) * 100)
+        putDouble("distance", distVal)
+        putString("distanceUnit", distUnit)
+        putDouble("calories", energyVal)
+        putString("energyUnit", energyUnit)
+        putDouble("progress", if (goal > 0) (stepsD / goal) * 100 else 0.0)
         putInt("dailyGoal", goal)
         putDouble("time", stepsD / 98)
     }
@@ -85,10 +101,9 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
                 result.putInt(cursor.getString(0), cursor.getInt(1))
             }
             cursor.close()
-
             promise.resolve(result)
         } catch (e: Exception) {
-            promise.reject("ERROR_HISTORY", "No se pudo obtener el historial", e)
+            promise.reject("ERROR_HISTORY", e)
         }
     }
 
@@ -105,30 +120,26 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
                 result.putInt(cursor.getInt(0).toString(), cursor.getInt(1))
             }
             cursor.close()
-
             promise.resolve(result)
         } catch (e: Exception) {
-            promise.reject("ERROR_HOURLY_HISTORY", "No se pudo obtener historial por hora", e)
+            promise.reject("ERROR_HOURLY_HISTORY", e)
         }
     }
 
-    // WEEKLY SUMMARY (RESTORED)
+    // WEEKLY SUMMARY
     @ReactMethod
     fun getWeeklySummary(promise: Promise) {
         try {
             val cursor = db.rawQuery(
                 """
-                SELECT SUM(steps) as total,
-                       AVG(steps) as avg,
-                       COUNT(*) as days
+                SELECT SUM(steps), AVG(steps), COUNT(*)
                 FROM daily_history
-                WHERE date >= date('now', '-6 day')
-                """.trimIndent(),
-                emptyArray()
+                WHERE date >= date('now','-6 day')
+            """.trimIndent(),
+                null
             )
 
             val result = Arguments.createMap()
-
             if (cursor.moveToFirst()) {
                 result.putInt("totalSteps", cursor.getInt(0))
                 result.putInt("averageSteps", cursor.getDouble(1).toInt())
@@ -138,7 +149,6 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
             cursor.close()
             promise.resolve(result)
-
         } catch (e: Exception) {
             promise.reject("ERR_WEEKLY", e)
         }
@@ -148,48 +158,49 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun getWeeklyProgress(promise: Promise) {
         try {
-            val dailyGoal = historyRepo.getDailyGoal()
+            val goal = historyRepo.getDailyGoal()
 
             val cursor = db.rawQuery(
                 """
-                SELECT date, steps 
-                FROM daily_history
-                WHERE date >= date('now', '-6 day')
+                SELECT date, steps FROM daily_history
+                WHERE date >= date('now','-6 day')
                 ORDER BY date ASC
-                """.trimIndent(),
-                emptyArray()
+            """.trimIndent(),
+                null
             )
 
             val array = Arguments.createArray()
 
-            if (cursor.moveToFirst()) {
-                do {
-                    val date = cursor.getString(0)
-                    val steps = cursor.getInt(1)
+            while (cursor.moveToNext()) {
+                val date = cursor.getString(0)
+                val steps = cursor.getInt(1)
 
-                    val map = Arguments.createMap().apply {
-                        putString("date", date)
-                        putInt("steps", steps)
-                        putDouble("distance", steps * 0.0008)
-                        putDouble("calories", steps * 0.04)
-                        putInt("goal", dailyGoal)
-                        putDouble("percentage", (steps.toDouble() / dailyGoal) * 100)
-                        putBoolean("goalCompleted", steps >= dailyGoal)
-                    }
+                val (distVal, distUnit) = computeDistance(steps)
+                val (energyVal, energyUnit) = computeEnergy(steps)
 
-                    array.pushMap(map)
+                val map = Arguments.createMap().apply {
+                    putString("date", date)
+                    putInt("steps", steps)
+                    putDouble("distance", distVal)
+                    putDouble("calories", energyVal)
+                    putString("distanceUnit", distUnit)
+                    putString("energyUnit", energyUnit)
+                    putInt("goal", goal)
+                    putDouble("percentage", if (goal > 0) steps.toDouble() / goal * 100 else 0.0)
+                    putBoolean("goalCompleted", steps >= goal)
+                }
 
-                } while (cursor.moveToNext())
+                array.pushMap(map)
             }
 
             cursor.close()
             promise.resolve(array)
-
         } catch (e: Exception) {
             promise.reject("ERR_PROGRESS", e)
         }
     }
-    // STREAK COUNT 
+
+    // STREAK
     @ReactMethod
     fun getStreakCount(promise: Promise) {
         try {
@@ -198,8 +209,8 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
                 null
             )
 
-            var streak = 0
             val today = currentDate()
+            var streak = 0
 
             while (cursor.moveToNext()) {
                 val date = cursor.getString(0)
@@ -207,90 +218,97 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
                 val goal = cursor.getInt(2)
 
                 if (date == today) continue
-                if (steps >= goal) streak++
-                else break
+                if (steps >= goal) streak++ else break
             }
 
             cursor.close()
             promise.resolve(streak)
-
         } catch (e: Exception) {
-            promise.reject("ERROR_STREAK", "No se pudo calcular la racha", e)
+            promise.reject("ERROR_STREAK", e)
         }
     }
 
-    // ADVANCED STATS
+    // STATS
     @ReactMethod
     fun getDailyStats(date: String, promise: Promise) {
         try {
             promise.resolve(statsRepo.getDailyHourlyStats(date))
         } catch (e: Exception) {
-            promise.reject("GET_DAILY_STATS_ERROR", e.message, e)
+            promise.reject("GET_DAILY_STATS_ERROR", e)
         }
     }
 
     @ReactMethod
-    fun getWeeklyStats(language: String, offset: Int, promise: Promise) {
+    fun getWeeklyStats(lang: String, offset: Int, promise: Promise) {
         try {
-            promise.resolve(statsRepo.getWeeklyStats(language, offset))
+            promise.resolve(statsRepo.getWeeklyStats(offset))
         } catch (e: Exception) {
-            promise.reject("GET_WEEKLY_STATS_ERROR", e.message, e)
+            promise.reject("GET_WEEKLY_STATS_ERROR", e)
         }
     }
 
     @ReactMethod
-    fun getMonthlyStats(language: String, offset: Int, promise: Promise) {
+    fun getMonthlyStats(lang: String, offset: Int, promise: Promise) {
         try {
-            promise.resolve(statsRepo.getMonthlyStats(language, offset))
+            promise.resolve(statsRepo.getMonthlyStats(offset))
         } catch (e: Exception) {
-            promise.reject("GET_MONTHLY_STATS_ERROR", e.message, e)
+            promise.reject("GET_MONTHLY_STATS_ERROR", e)
         }
     }
 
     @ReactMethod
-    fun getYearlyStats(language: String, offset: Int, promise: Promise) {
+    fun getYearlyStats(lang: String, offset: Int, promise: Promise) {
         try {
-            promise.resolve(statsRepo.getYearlyStats(language, offset))
+            promise.resolve(statsRepo.getYearlyStats(offset))
         } catch (e: Exception) {
-            promise.reject("GET_YEARLY_STATS_ERROR", e.message, e)
+            promise.reject("GET_YEARLY_STATS_ERROR", e)
         }
     }
 
     // CONFIG
     @ReactMethod fun setUserLanguage(lang: String) = prefsManager.setLanguage(lang)
-
-    @ReactMethod
-    fun getUserLanguage(promise: Promise) {
-        try {
-            promise.resolve(prefsManager.getLanguage())
-        } catch (e: Exception) {
-            promise.reject("ERROR_USER_LANGUAGE", e)
-        }
-    }
-
     @ReactMethod fun setWeekStart(day: String) = prefsManager.setWeekStart(day)
+    @ReactMethod fun setDistanceUnit(unit: String) = prefsManager.setDistanceUnit(unit)
+    @ReactMethod fun setEnergyUnit(unit: String) = prefsManager.setEnergyUnit(unit)
 
     @ReactMethod
     fun getUserPreferences(promise: Promise) {
         try {
             promise.resolve(prefsManager.getUserPreferences())
         } catch (e: Exception) {
-            promise.reject("ERROR_PREFERENCES", e)
+            promise.reject("ERROR_PREFS", e)
         }
     }
 
-    // BACKGROUND SYNC WORKER
+    // WORKER
     @ReactMethod
     fun scheduleBackgroundSync() {
-        val workRequest = PeriodicWorkRequestBuilder<StepSyncWorker>(15, TimeUnit.MINUTES)
+        val request = PeriodicWorkRequestBuilder<StepSyncWorker>(15, TimeUnit.MINUTES)
             .addTag("step_sync")
             .build()
 
         WorkManager.getInstance(reactContext).enqueueUniquePeriodicWork(
             "step_sync",
             ExistingPeriodicWorkPolicy.KEEP,
-            workRequest
+            request
         )
+    }
+
+    // UTILS
+    private fun computeDistance(steps: Int): Pair<Double, String> {
+        val km = steps * (METERS_PER_STEP / 1000.0)
+        return when (prefsManager.getDistanceUnit()) {
+            "miles" -> km * KM_TO_MILES to "mi"
+            else -> km to "km"
+        }
+    }
+
+    private fun computeEnergy(steps: Int): Pair<Double, String> {
+        val kcal = steps * KCAL_PER_STEP
+        return when (prefsManager.getEnergyUnit()) {
+            "kj" -> kcal * KCAL_TO_KJ to "kJ"
+            else -> kcal to "kcal"
+        }
     }
 
     @ReactMethod fun addListener(eventName: String) {}

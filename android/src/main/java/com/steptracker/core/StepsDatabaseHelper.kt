@@ -9,7 +9,7 @@ class StepsDatabaseHelper(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "steps.db"
-        const val DATABASE_VERSION = 3
+        const val DATABASE_VERSION = 4
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -22,7 +22,7 @@ class StepsDatabaseHelper(context: Context) :
                 offset INTEGER DEFAULT 0,
                 goal INTEGER DEFAULT 10000
             )
-        """
+            """
         )
 
         db.execSQL(
@@ -33,7 +33,7 @@ class StepsDatabaseHelper(context: Context) :
                 steps INTEGER,
                 PRIMARY KEY (date, hour)
             )
-        """
+            """
         )
 
         db.execSQL(
@@ -42,14 +42,24 @@ class StepsDatabaseHelper(context: Context) :
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """
+            """
         )
+        insertDefaultConfigValues(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 4) {
+            insertDefaultConfigValues(db)
+        }
     }
 
     override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         onUpgrade(db, oldVersion, newVersion)
+    }
+
+    private fun insertDefaultConfigValues(db: SQLiteDatabase) {
+        db.execSQL("INSERT OR IGNORE INTO config(key, value) VALUES ('week_start', 'monday')")
+        db.execSQL("INSERT OR IGNORE INTO config(key, value) VALUES ('distance_unit', 'km')")
+        db.execSQL("INSERT OR IGNORE INTO config(key, value) VALUES ('energy_unit', 'kcal')")
     }
 }

@@ -53,29 +53,40 @@ class StepHistoryRepository(
         insertOrUpdateDaily(date, steps, offset, goal)
     }
 
+    // GOAL
     fun getDailyGoal(): Int {
         return config.get("daily_goal")?.toIntOrNull() ?: 10000
     }
 
     fun setDailyGoal(goal: Int) {
         config.set("daily_goal", goal.toString())
+
         val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         val values = ContentValues().apply { put("goal", goal) }
+
         db.update("daily_history", values, "date = ?", arrayOf(today))
     }
 
+    // HOURLY HISTORY
     fun insertOrUpdateHourly(date: String, hour: Int, steps: Int) {
+
         val cursor = db.rawQuery(
             "SELECT steps FROM hourly_history WHERE date = ? AND hour = ?",
             arrayOf(date, hour.toString())
         )
 
-        val exists = cursor.use { it.moveToFirst() }
+        var exists = false
+        var existingSteps = 0
+
+        if (cursor.moveToFirst()) {
+            exists = true
+            existingSteps = cursor.getInt(0)
+        }
+        cursor.close()
 
         if (exists) {
-            val existing = cursor.getInt(0)
             val values = ContentValues().apply {
-                put("steps", existing + steps)
+                put("steps", existingSteps + steps)
             }
             db.update(
                 "hourly_history",
@@ -83,6 +94,7 @@ class StepHistoryRepository(
                 "date = ? AND hour = ?",
                 arrayOf(date, hour.toString())
             )
+
         } else {
             val values = ContentValues().apply {
                 put("date", date)
