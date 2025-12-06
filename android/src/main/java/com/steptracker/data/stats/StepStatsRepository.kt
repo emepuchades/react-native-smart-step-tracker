@@ -64,10 +64,15 @@ class StepStatsRepository(
 
         val yesterdaySteps = getSteps(date, -1)
         val totalDistance = calculateDistance(totalSteps)
-
         val yesterdayDistance = calculateDistance(yesterdaySteps)
+
         val distanceDiffPercent =
-            if (yesterdayDistance > 0) ((totalDistance - yesterdayDistance) / yesterdayDistance) * 100 else 0.0
+            if (yesterdayDistance > 0)
+                ((totalDistance - yesterdayDistance) / yesterdayDistance) * 100
+            else 0.0
+
+        val distanceUnit = prefs.getDistanceUnit()
+        val energyUnit = prefs.getEnergyUnit()
 
         return Arguments.createMap().apply {
             putArray("hours", hoursArray)
@@ -80,6 +85,8 @@ class StepStatsRepository(
             putInt("goal", dailyGoal)
             putBoolean("goalCompleted", totalSteps >= dailyGoal)
             putString("mostActiveHour", mostActiveHour)
+            putString("distanceUnit", distanceUnit)
+            putString("energyUnit", energyUnit)
         }
     }
 
@@ -99,23 +106,40 @@ class StepStatsRepository(
         var activeMinutes = 0
         var goalDays = 0
 
+        var minSteps = Int.MAX_VALUE
+        var maxSteps = 0
+
         val daysArray = Arguments.createArray()
+
+        val lastValidIndex = when {
+            today.isBefore(start) -> -1
+            today.isAfter(end)    -> 6
+            else -> java.time.temporal.ChronoUnit.DAYS.between(start, today).toInt()
+        }
 
         for (i in 0..6) {
             val date = start.plusDays(i.toLong())
-            val steps = getSteps(date.toString())
+            val isFutureDay = i > lastValidIndex
+            val steps = if (isFutureDay) 0 else getSteps(date.toString())
 
-            totalSteps += steps
-            if (steps > 0) activeMinutes += 60
-            if (steps > mostSteps) {
-                mostSteps = steps
-                mostActiveDay = dayFull(date)
+            if (!isFutureDay) {
+                totalSteps += steps
+
+                if (steps > 0) activeMinutes += 60
+
+                if (steps > mostSteps) {
+                    mostSteps = steps
+                    mostActiveDay = dayFull(date)
+                }
+                if (steps < leastSteps) {
+                    leastSteps = steps
+                    leastActiveDay = dayFull(date)
+                }
+
+                if (steps > maxSteps) maxSteps = steps
+                if (steps < minSteps) minSteps = steps
+                if (steps >= dailyGoal) goalDays++
             }
-            if (steps < leastSteps) {
-                leastSteps = steps
-                leastActiveDay = dayFull(date)
-            }
-            if (steps >= dailyGoal) goalDays++
 
             daysArray.pushMap(
                 Arguments.createMap().apply {
@@ -126,6 +150,7 @@ class StepStatsRepository(
                     putDouble("distance", calculateDistance(steps))
                     putDouble("calories", calculateCalories(steps))
                     putBoolean("goalCompleted", steps >= dailyGoal)
+                    putBoolean("future", isFutureDay)
                 }
             )
         }
@@ -133,6 +158,8 @@ class StepStatsRepository(
         val prevSteps = getStepsRange(start.minusWeeks(1), start.minusWeeks(1).plusDays(6))
         val diff = totalSteps - prevSteps
         val improvement = if (prevSteps > 0) diff.toDouble() / prevSteps * 100 else 0.0
+
+        val safeMinSteps = if (minSteps == Int.MAX_VALUE) 0 else minSteps
 
         return Arguments.createMap().apply {
             putInt("goal", dailyGoal * 7)
@@ -148,13 +175,16 @@ class StepStatsRepository(
             putInt("stepDifference", diff)
             putString("startDate", start.toString())
             putString("endDate", end.toString())
+            putInt("minSteps", safeMinSteps)
+            putInt("maxSteps", maxSteps)
+            putString("stepsRange", "$safeMinSteps - $maxSteps")
         }
     }
 
     fun getMonthlyStats(offset: Int): WritableMap {
         val today = LocalDate.now()
         val target = today.plusMonths(offset.toLong())
-        val days = target.lengthOfMonth()
+        val totalDaysInMonth = target.lengthOfMonth()
 
         val array = Arguments.createArray()
 
@@ -166,20 +196,42 @@ class StepStatsRepository(
         var activeMinutes = 0
         var goalDays = 0
 
-        for (d in 1..days) {
-            val date = target.withDayOfMonth(d)
-            val steps = getSteps(date.toString())
+        var minSteps = Int.MAX_VALUE
+        var maxSteps = 0
 
-            totalSteps += steps
-            if (steps > 0) activeMinutes += 60
-            if (steps >= dailyGoal) goalDays++
-            if (steps > mostSteps) {
-                mostSteps = steps
-                mostActiveDay = dayFull(date)
-            }
-            if (steps < leastSteps) {
-                leastSteps = steps
-                leastActiveDay = dayFull(date)
+        val lastValidDay = when {
+            today.year > target.year || (today.year == target.year && today.monthValue > target.monthValue)
+            -> totalDaysInMonth
+
+            today.year < target.year || (today.year == target.year && today.monthValue < target.monthValue)
+            -> 0
+
+            else -> today.dayOfMonth
+        }
+
+        for (d in 1..totalDaysInMonth) {
+            val date = target.withDayOfMonth(d)
+            val isFutureDay = d > lastValidDay
+
+            val steps = if (isFutureDay) 0 else getSteps(date.toString())
+
+            if (!isFutureDay) {
+                totalSteps += steps
+
+                if (steps > 0) activeMinutes += 60
+                if (steps >= dailyGoal) goalDays++
+
+                if (steps > mostSteps) {
+                    mostSteps = steps
+                    mostActiveDay = dayFull(date)
+                }
+                if (steps < leastSteps) {
+                    leastSteps = steps
+                    leastActiveDay = dayFull(date)
+                }
+
+                if (steps > maxSteps) maxSteps = steps
+                if (steps < minSteps) minSteps = steps
             }
 
             array.pushMap(
@@ -189,9 +241,12 @@ class StepStatsRepository(
                     putBoolean("isToday", date == today)
                     putDouble("distance", calculateDistance(steps))
                     putDouble("calories", calculateCalories(steps))
+                    putBoolean("future", isFutureDay)
                 }
             )
         }
+
+        val safeMinSteps = if (minSteps == Int.MAX_VALUE) 0 else minSteps
 
         val prevStart = target.minusMonths(1).withDayOfMonth(1)
         val prevEnd = prevStart.withDayOfMonth(prevStart.lengthOfMonth())
@@ -201,7 +256,7 @@ class StepStatsRepository(
         val improvement = if (prevSteps > 0) diff.toDouble() / prevSteps * 100 else 0.0
 
         return Arguments.createMap().apply {
-            putInt("goal", dailyGoal * 30)
+            putInt("goal", dailyGoal * totalDaysInMonth)
             putInt("totalSteps", totalSteps)
             putDouble("totalDistance", calculateDistance(totalSteps))
             putDouble("totalCalories", calculateCalories(totalSteps))
@@ -212,35 +267,53 @@ class StepStatsRepository(
             putArray("days", array)
             putDouble("improvement", improvement)
             putInt("stepDifference", diff)
+            putInt("minSteps", safeMinSteps)
+            putInt("maxSteps", maxSteps)
+            putString("stepsRange", "$safeMinSteps - $maxSteps")
         }
     }
 
     fun getYearlyStats(offset: Int): WritableMap {
-        val year = LocalDate.now().year + offset
+        val today = LocalDate.now()
+        val targetYear = today.year + offset
 
         var totalSteps = 0
         var mostSteps = 0
         var leastSteps = Int.MAX_VALUE
-        var mostActive = ""
-        var leastActive = ""
+        var mostActiveMonth = ""
+        var leastActiveMonth = ""
+
+        var minSteps = Int.MAX_VALUE
+        var maxSteps = 0
 
         val monthsArray = Arguments.createArray()
 
+        val lastValidMonth = when {
+            today.year > targetYear -> 12
+            today.year < targetYear -> 0
+            else -> today.monthValue
+        }
+
         for (m in 1..12) {
-            val start = LocalDate.of(year, m, 1)
+            val start = LocalDate.of(targetYear, m, 1)
             val end = start.withDayOfMonth(start.lengthOfMonth())
 
-            val steps = getStepsRange(start, end)
-            totalSteps += steps
+            val isFutureMonth = m > lastValidMonth
 
-            if (steps > mostSteps) {
-                mostSteps = steps
-                mostActive = start.month.getDisplayName(TextStyle.FULL, locale)
-            }
+            val steps = if (isFutureMonth) 0 else getStepsRange(start, end)
 
-            if (steps < leastSteps) {
-                leastSteps = steps
-                leastActive = start.month.getDisplayName(TextStyle.FULL, locale)
+            if (!isFutureMonth) {
+                totalSteps += steps
+                if (steps > mostSteps) {
+                    mostSteps = steps
+                    mostActiveMonth = start.month.getDisplayName(TextStyle.FULL, locale)
+                }
+                if (steps < leastSteps) {
+                    leastSteps = steps
+                    leastActiveMonth = start.month.getDisplayName(TextStyle.FULL, locale)
+                }
+                if (steps > maxSteps) maxSteps = steps
+                if (steps < minSteps) minSteps = steps
             }
 
             monthsArray.pushMap(
@@ -249,18 +322,24 @@ class StepStatsRepository(
                     putInt("steps", steps)
                     putDouble("distance", calculateDistance(steps))
                     putDouble("calories", calculateCalories(steps))
+                    putBoolean("future", isFutureMonth)
                 }
             )
         }
+
+        val safeMinSteps = if (minSteps == Int.MAX_VALUE) 0 else minSteps
 
         return Arguments.createMap().apply {
             putInt("goal", dailyGoal * 365)
             putInt("totalSteps", totalSteps)
             putDouble("totalDistance", calculateDistance(totalSteps))
             putDouble("totalCalories", calculateCalories(totalSteps))
-            putString("mostActiveMonth", mostActive)
-            putString("leastActiveMonth", leastActive)
+            putString("mostActiveMonth", mostActiveMonth)
+            putString("leastActiveMonth", leastActiveMonth)
             putArray("months", monthsArray)
+            putInt("minSteps", safeMinSteps)
+            putInt("maxSteps", maxSteps)
+            putString("stepsRange", "$safeMinSteps - $maxSteps")
         }
     }
 
@@ -296,10 +375,15 @@ class StepStatsRepository(
             arrayOf(start.toString(), end.toString())
         ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
-    private fun computeWeekStartShift(today: LocalDate, start: String): Int =
-        when (start) {
-            "sunday" -> if (today.dayOfWeek.value == 7) 0 else today.dayOfWeek.value
-            "monday" -> today.dayOfWeek.value - 1
-            else -> 0
+    private fun computeWeekStartShift(today: LocalDate, start: String): Int {
+        val startValue = when (start.lowercase()) {
+            "monday" -> 1
+            "sunday" -> 7
+            "saturday" -> 6
+            else -> 1
         }
+
+        val todayValue = today.dayOfWeek.value
+        return (todayValue - startValue + 7) % 7
+    }
 }

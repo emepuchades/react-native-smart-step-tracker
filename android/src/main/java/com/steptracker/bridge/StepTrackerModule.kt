@@ -17,6 +17,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.time.LocalDate
+import java.time.DayOfWeek
+import java.time.temporal.TemporalAdjusters
 
 class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -37,6 +40,20 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     private val prefsManager = UserPreferencesManager(configRepo)
     private val historyRepo = StepHistoryRepository(db, configRepo)
     private val statsRepo = StepStatsRepository(db, prefsManager, historyRepo)
+
+    private fun currentDate(): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
+    private fun computeWeekStartDate(today: LocalDate, start: String): LocalDate {
+        val weekStartDay = when (start.lowercase()) {
+            "monday" -> DayOfWeek.MONDAY
+            "sunday" -> DayOfWeek.SUNDAY
+            "saturday" -> DayOfWeek.SATURDAY
+            else -> DayOfWeek.MONDAY
+        }
+        return today.with(TemporalAdjusters.previousOrSame(weekStartDay))
+    }
+
 
     @ReactMethod
     fun startTracking() {
@@ -82,15 +99,13 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         putString("distanceUnit", distUnit)
         putDouble("calories", energyVal)
         putString("energyUnit", energyUnit)
+
         putDouble("progress", if (goal > 0) (stepsD / goal) * 100 else 0.0)
         putInt("dailyGoal", goal)
+
         putDouble("time", stepsD / 98)
     }
 
-    private fun currentDate(): String =
-        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-
-    // HISTORY
     @ReactMethod
     fun getStepsHistory(promise: Promise) {
         try {
@@ -100,6 +115,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             while (cursor.moveToNext()) {
                 result.putInt(cursor.getString(0), cursor.getInt(1))
             }
+
             cursor.close()
             promise.resolve(result)
         } catch (e: Exception) {
@@ -119,88 +135,147 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             while (cursor.moveToNext()) {
                 result.putInt(cursor.getInt(0).toString(), cursor.getInt(1))
             }
+
             cursor.close()
             promise.resolve(result)
+
         } catch (e: Exception) {
             promise.reject("ERROR_HOURLY_HISTORY", e)
         }
     }
 
-    // WEEKLY SUMMARY
     @ReactMethod
     fun getWeeklySummary(promise: Promise) {
         try {
-            val cursor = db.rawQuery(
-                """
-                SELECT SUM(steps), AVG(steps), COUNT(*)
-                FROM daily_history
-                WHERE date >= date('now','-6 day')
-            """.trimIndent(),
-                null
-            )
+            val weekStartPref = prefsManager.getWeekStart()
+            val today = LocalDate.now()
+            val start = computeWeekStartDate(today, weekStartPref)
+            val goal = historyRepo.getDailyGoal()
 
-            val result = Arguments.createMap()
-            if (cursor.moveToFirst()) {
-                result.putInt("totalSteps", cursor.getInt(0))
-                result.putInt("averageSteps", cursor.getDouble(1).toInt())
-                result.putInt("daysCount", cursor.getInt(2))
-                result.putInt("activeDays", cursor.getInt(2))
+            var totalSteps = 0
+            var daysCount = 0
+            var activeDays = 0
+
+            for (i in 0..6) {
+                val date = start.plusDays(i.toLong())
+                if (date.isAfter(today)) break
+
+                val steps = historyRepo.getStepsForDate(date.toString())
+                totalSteps += steps
+                daysCount++
+
+                if (steps >= goal) {
+                    activeDays++
+                }
             }
 
-            cursor.close()
+            val prevStart = start.minusWeeks(1)
+            val prevEnd = prevStart.plusDays(6)
+
+            val prevCursor = db.rawQuery(
+                """
+                SELECT SUM(steps)
+                FROM daily_history
+                WHERE date BETWEEN ? AND ?
+                """.trimIndent(),
+                arrayOf(prevStart.toString(), prevEnd.toString())
+            )
+
+            var prevSteps = 0
+            if (prevCursor.moveToFirst()) {
+                prevSteps = prevCursor.getInt(0)
+            }
+            prevCursor.close()
+
+            val diff = totalSteps - prevSteps
+            val improvement = if (prevSteps > 0) {
+                diff.toDouble() / prevSteps * 100.0
+            } else {
+                0.0
+            }
+
+            val (totalDistance, distanceUnit) = computeDistance(totalSteps)
+            val (totalEnergy, energyUnit) = computeEnergy(totalSteps)
+
+            val timeMinutes = if (totalSteps > 0) totalSteps / 98.0 else 0.0
+
+            val avgStepsPerDay = if (daysCount > 0) totalSteps / daysCount else 0
+
+            val result = Arguments.createMap().apply {
+                putInt("totalSteps", totalSteps)
+                putInt("averageSteps", avgStepsPerDay)
+                putInt("daysCount", daysCount)
+                putInt("activeDays", activeDays)
+
+                putDouble("totalDistance", totalDistance)
+                putString("distanceUnit", distanceUnit)
+
+                putDouble("totalCalories", totalEnergy)
+                putString("energyUnit", energyUnit)
+
+                putDouble("timeMinutes", timeMinutes)
+                putInt("avgStepsPerDay", avgStepsPerDay)
+
+                putDouble("improvement", improvement)
+            }
+
             promise.resolve(result)
+
         } catch (e: Exception) {
             promise.reject("ERR_WEEKLY", e)
         }
     }
 
-    // WEEKLY PROGRESS
     @ReactMethod
     fun getWeeklyProgress(promise: Promise) {
         try {
+            val weekStartPref = prefsManager.getWeekStart()
+            val distanceUnit = prefsManager.getDistanceUnit()
+            val energyUnit = prefsManager.getEnergyUnit()
             val goal = historyRepo.getDailyGoal()
 
-            val cursor = db.rawQuery(
-                """
-                SELECT date, steps FROM daily_history
-                WHERE date >= date('now','-6 day')
-                ORDER BY date ASC
-            """.trimIndent(),
-                null
-            )
+            val today = LocalDate.now()
+            val start = computeWeekStartDate(today, weekStartPref)
 
             val array = Arguments.createArray()
 
-            while (cursor.moveToNext()) {
-                val date = cursor.getString(0)
-                val steps = cursor.getInt(1)
+            for (i in 0..6) {
+                val date = start.plusDays(i.toLong())
+                val isFuture = date.isAfter(today)
+                val steps = if (isFuture) 0 else historyRepo.getStepsForDate(date.toString())
 
-                val (distVal, distUnit) = computeDistance(steps)
-                val (energyVal, energyUnit) = computeEnergy(steps)
+                val (distance, _) = computeDistance(steps)
+                val (calories, _) = computeEnergy(steps)
+
+                val percentage = if (goal > 0) steps.toDouble() / goal * 100 else 0.0
+
+                val dayKey = getDayKey(date.dayOfWeek)
 
                 val map = Arguments.createMap().apply {
-                    putString("date", date)
+                    putString("date", date.toString())
+                    putString("dayKey", dayKey)
                     putInt("steps", steps)
-                    putDouble("distance", distVal)
-                    putDouble("calories", energyVal)
-                    putString("distanceUnit", distUnit)
+                    putDouble("distance", distance)
+                    putString("distanceUnit", distanceUnit)
+                    putDouble("calories", calories)
                     putString("energyUnit", energyUnit)
                     putInt("goal", goal)
-                    putDouble("percentage", if (goal > 0) steps.toDouble() / goal * 100 else 0.0)
+                    putDouble("percentage", percentage)
                     putBoolean("goalCompleted", steps >= goal)
+                    putBoolean("isToday", date == today)
+                    putBoolean("future", isFuture)
                 }
 
                 array.pushMap(map)
             }
 
-            cursor.close()
             promise.resolve(array)
+
         } catch (e: Exception) {
             promise.reject("ERR_PROGRESS", e)
         }
     }
 
-    // STREAK
     @ReactMethod
     fun getStreakCount(promise: Promise) {
         try {
@@ -223,12 +298,12 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
             cursor.close()
             promise.resolve(streak)
+
         } catch (e: Exception) {
             promise.reject("ERROR_STREAK", e)
         }
     }
 
-    // STATS
     @ReactMethod
     fun getDailyStats(date: String, promise: Promise) {
         try {
@@ -265,7 +340,6 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    // CONFIG
     @ReactMethod fun setUserLanguage(lang: String) = prefsManager.setLanguage(lang)
     @ReactMethod fun setWeekStart(day: String) = prefsManager.setWeekStart(day)
     @ReactMethod fun setDistanceUnit(unit: String) = prefsManager.setDistanceUnit(unit)
@@ -280,7 +354,6 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    // WORKER
     @ReactMethod
     fun scheduleBackgroundSync() {
         val request = PeriodicWorkRequestBuilder<StepSyncWorker>(15, TimeUnit.MINUTES)
@@ -294,7 +367,18 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         )
     }
 
-    // UTILS
+    private fun getDayKey(day: DayOfWeek): String {
+        return when (day) {
+            DayOfWeek.MONDAY -> "mon"
+            DayOfWeek.TUESDAY -> "tue"
+            DayOfWeek.WEDNESDAY -> "wed"
+            DayOfWeek.THURSDAY -> "thu"
+            DayOfWeek.FRIDAY -> "fri"
+            DayOfWeek.SATURDAY -> "sat"
+            DayOfWeek.SUNDAY -> "sun"
+        }
+    }
+
     private fun computeDistance(steps: Int): Pair<Double, String> {
         val km = steps * (METERS_PER_STEP / 1000.0)
         return when (prefsManager.getDistanceUnit()) {
