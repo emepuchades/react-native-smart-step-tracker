@@ -22,6 +22,12 @@ class StepTrackerService : Service(), SensorEventListener {
         const val ACTION_STEPS_UPDATE = "com.steptracker.STEPS_UPDATE"
         const val EXTRA_STEPS = "steps_today"
 
+        @Volatile
+        var allowStepCounter: Boolean? = false
+
+        @Volatile
+        var allowStepDetector: Boolean? = true
+
         fun updateNotificationExternally(ctx: Context, steps: Int) {
             val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             mgr.notify(NOTIF_ID, buildBaseNotification(ctx, steps))
@@ -47,9 +53,13 @@ class StepTrackerService : Service(), SensorEventListener {
 
     private val sensorManager by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
     private val stepSensor by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
+    private val stepDetector by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) }
 
     private var lastCounter = -1f
     private var todayOffsetCounter: Int = -1
+    private var detectorStepsToday: Int = 0
+    private var usingStepCounter = false
+    private var usingStepDetector = false
 
     override fun onCreate() {
         super.onCreate()
@@ -60,8 +70,9 @@ class StepTrackerService : Service(), SensorEventListener {
         lastCounter = configRepo.get("last_counter")?.toFloatOrNull() ?: -1f
         todayOffsetCounter = historyRepo.getTodayOffset(todayStr())
 
-        stepSensor?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        if (!registerAvailableSensor()) {
+            stopSelf()
+            return
         }
 
         updateNotificationFromDb()
@@ -78,8 +89,25 @@ class StepTrackerService : Service(), SensorEventListener {
 
     override fun onSensorChanged(ev: SensorEvent?) {
         ev ?: return
-        val counter = ev.values[0]
         val nowMs = System.currentTimeMillis()
+
+        when (ev.sensor.type) {
+            Sensor.TYPE_STEP_COUNTER -> if (usingStepCounter) {
+                handleStepCounterEvent(ev.values[0], nowMs)
+            }
+            Sensor.TYPE_STEP_DETECTOR -> if (usingStepDetector) {
+                var deltaSteps = 0
+                for (value in ev.values) {
+                    deltaSteps += value.toInt()
+                }
+                handleStepDetectorEvent(deltaSteps, nowMs)
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    private fun handleStepCounterEvent(counter: Float, nowMs: Long) {
         val today = todayStr(nowMs)
 
         if (lastCounter < 0f) {
@@ -120,7 +148,24 @@ class StepTrackerService : Service(), SensorEventListener {
         lastCounter = counter
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    private fun handleStepDetectorEvent(deltaSteps: Int, nowMs: Long) {
+        if (deltaSteps <= 0) return
+
+        val today = todayStr(nowMs)
+        val prevDate = configRepo.get("prev_date") ?: today
+        if (prevDate != today) {
+            detectorStepsToday = safeSteps(historyRepo.getStepsForDate(today))
+            configRepo.set("prev_date", today)
+        }
+
+        detectorStepsToday += deltaSteps
+        saveHourly(today, hourStr(nowMs), deltaSteps.toFloat())
+        historyRepo.setStepsForDate(today, detectorStepsToday)
+        configRepo.set("last_counter", detectorStepsToday.toString())
+        configRepo.set("last_counter_time", nowMs.toString())
+
+        broadcastAndNotify(detectorStepsToday)
+    }
 
     private fun broadcastAndNotify(steps: Int) {
         val intent = Intent(ACTION_STEPS_UPDATE).putExtra(EXTRA_STEPS, steps)
@@ -131,6 +176,34 @@ class StepTrackerService : Service(), SensorEventListener {
     private fun saveHourly(date: String, hour: String, delta: Float) {
         historyRepo.insertOrUpdateHourly(date, hour.toInt(), delta.toInt())
     }
+
+    private fun registerAvailableSensor(): Boolean {
+        usingStepCounter = false
+        usingStepDetector = false
+
+            // Siempre intentar usar el Step Counter primero
+            if (stepSensor != null) {
+                sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_UI)
+                usingStepCounter = true
+                return true
+            }
+
+            // Si no existe Step Counter, usar Step Detector
+            if (stepDetector != null) {
+                val today = todayStr()
+                detectorStepsToday = safeSteps(historyRepo.getStepsForDate(today))
+                if (configRepo.get("prev_date") == null) {
+                    configRepo.set("prev_date", today)
+                }
+                sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL)
+                usingStepDetector = true
+                return true
+            }
+
+            return false
+    }
+
+    private fun safeSteps(value: Int) = if (value < 0) 0 else value
 
     private fun initOrFixOffset(counter: Float, timeMs: Long) {
         val today = todayStr(timeMs)
