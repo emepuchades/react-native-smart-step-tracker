@@ -181,26 +181,16 @@ class StepTrackerService : Service(), SensorEventListener {
         usingStepCounter = false
         usingStepDetector = false
 
-            // Siempre intentar usar el Step Counter primero
-            if (stepSensor != null) {
-                sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_UI)
-                usingStepCounter = true
-                return true
-            }
-
-            // Si no existe Step Counter, usar Step Detector
-            if (stepDetector != null) {
-                val today = todayStr()
-                detectorStepsToday = safeSteps(historyRepo.getStepsForDate(today))
-                if (configRepo.get("prev_date") == null) {
-                    configRepo.set("prev_date", today)
-                }
-                sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL)
-                usingStepDetector = true
-                return true
-            }
-
-            return false
+        if (stepSensor != null) {
+            sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_UI)
+            usingStepCounter = true
+            return true
+        } else if (stepDetector != null) {
+            sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL)
+            usingStepDetector = true
+            return true
+        }
+        return false
     }
 
     private fun safeSteps(value: Int) = if (value < 0) 0 else value
