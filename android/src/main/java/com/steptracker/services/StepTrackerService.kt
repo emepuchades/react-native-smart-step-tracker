@@ -50,6 +50,7 @@ class StepTrackerService : Service(), SensorEventListener {
 
     private val configRepo by lazy { ConfigRepository(db) }
     private val historyRepo by lazy { StepHistoryRepository(db, configRepo) }
+    private val journeyRepo by lazy { JourneyRepository(db) }
 
     private val sensorManager by lazy { getSystemService(SENSOR_SERVICE) as SensorManager }
     private val stepSensor by lazy { sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) }
@@ -111,16 +112,18 @@ class StepTrackerService : Service(), SensorEventListener {
         val today = todayStr(nowMs)
 
         if (lastCounter < 0f) {
-            initOrFixOffset(counter, nowMs)
+            val recoveredSteps = initOrFixOffset(counter, nowMs)
             persistState(counter, nowMs, today)
+            syncActiveJourneyProgress(recoveredSteps, today, hourStr(nowMs).toInt())
             broadcastAndNotify((counter - todayOffsetCounter).toInt())
             lastCounter = counter
             return
         }
 
         if (counter < lastCounter) {
-            initOrFixOffset(counter, nowMs)
+            val recoveredSteps = initOrFixOffset(counter, nowMs)
             persistState(counter, nowMs, today)
+            syncActiveJourneyProgress(recoveredSteps, today, hourStr(nowMs).toInt())
             broadcastAndNotify(0)
             lastCounter = counter
             return
@@ -142,6 +145,7 @@ class StepTrackerService : Service(), SensorEventListener {
 
         val stepsToday = (counter - todayOffsetCounter)
         historyRepo.setStepsForDate(today, stepsToday.toInt())
+        syncActiveJourneyProgress(delta.toInt(), today, hourStr(nowMs).toInt())
         configRepo.set("last_counter", counter.toString())
 
         broadcastAndNotify(stepsToday.toInt())
@@ -161,6 +165,7 @@ class StepTrackerService : Service(), SensorEventListener {
         detectorStepsToday += deltaSteps
         saveHourly(today, hourStr(nowMs), deltaSteps.toFloat())
         historyRepo.setStepsForDate(today, detectorStepsToday)
+        syncActiveJourneyProgress(deltaSteps, today, hourStr(nowMs).toInt())
         configRepo.set("last_counter", detectorStepsToday.toString())
         configRepo.set("last_counter_time", nowMs.toString())
 
@@ -195,9 +200,10 @@ class StepTrackerService : Service(), SensorEventListener {
 
     private fun safeSteps(value: Int) = if (value < 0) 0 else value
 
-    private fun initOrFixOffset(counter: Float, timeMs: Long) {
+    private fun initOrFixOffset(counter: Float, timeMs: Long): Int {
         val today = todayStr(timeMs)
         val saved = historyRepo.getTodayOffset(today)
+        var recoveredSteps = 0
 
         if (saved < 0) {
             historyRepo.setTodayOffset(today, counter.toInt())
@@ -208,8 +214,22 @@ class StepTrackerService : Service(), SensorEventListener {
                 val prev = historyRepo.getStepsForDate(today)
                 historyRepo.setStepsForDate(today, (prev + missed).toInt())
                 historyRepo.setTodayOffset(today, counter.toInt())
+                recoveredSteps = missed.toInt()
             }
             todayOffsetCounter = historyRepo.getTodayOffset(today)
+        }
+
+        return recoveredSteps
+    }
+
+    private fun syncActiveJourneyProgress(deltaSteps: Int, date: String, hour: Int) {
+        if (deltaSteps <= 0) {
+            return
+        }
+
+        try {
+            journeyRepo.incrementActiveJourneyProgress(deltaSteps, date, hour)
+        } catch (_: Exception) {
         }
     }
 

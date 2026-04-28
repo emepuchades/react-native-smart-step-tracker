@@ -9,10 +9,14 @@ import com.facebook.react.bridge.*
 import com.steptracker.StepSyncWorker
 import com.steptracker.StepTrackerService
 import com.steptracker.data.steps.ConfigRepository
+import com.steptracker.data.steps.JourneyRepository
 import com.steptracker.data.steps.StepHistoryRepository
 import com.steptracker.data.steps.StepStatsRepository
 import com.steptracker.data.steps.StepsDatabaseHelper
 import com.steptracker.data.steps.UserPreferencesManager
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -40,6 +44,89 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     private val prefsManager = UserPreferencesManager(configRepo)
     private val historyRepo = StepHistoryRepository(db, configRepo)
     private val statsRepo = StepStatsRepository(db, prefsManager, historyRepo)
+    private val journeyRepo = JourneyRepository(db)
+
+    init {
+        android.util.Log.d("StepTrackerModule", "Module initialized, DB version: ${dbHelper.readableDatabase.version}")
+        android.util.Log.d("StepTrackerModule", "Database path: ${reactContext.getDatabasePath("steps.db").absolutePath}")
+        
+        // Ensure journey tables exist
+        ensureJourneyTablesExist()
+    }
+    
+    private fun ensureJourneyTablesExist() {
+        try {
+            val cursor = db.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='journeys'",
+                null
+            )
+            val journeyTableExists = cursor.moveToFirst()
+            cursor.close()
+            
+            if (!journeyTableExists) {
+                android.util.Log.w("StepTrackerModule", "journeys table doesn't exist, creating it...")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS journeys(
+                        journeyId TEXT PRIMARY KEY,
+                        status TEXT DEFAULT 'active',
+                        destination_name TEXT,
+                        destination_lat REAL,
+                        destination_lon REAL,
+                        destination_address TEXT,
+                        origin_name TEXT,
+                        origin_lat REAL,
+                        origin_lon REAL,
+                        origin_address TEXT,
+                        route_coords TEXT,
+                        total_distance_km REAL,
+                        checkpoints TEXT,
+                        created_at TEXT,
+                        started_at TEXT,
+                        completed_at TEXT
+                    )
+                    """
+                )
+                android.util.Log.d("StepTrackerModule", "created journeys table")
+            }
+            
+            val cursor2 = db.rawQuery(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='journey_daily_log'",
+                null
+            )
+            val dailyLogTableExists = cursor2.moveToFirst()
+            cursor2.close()
+            
+            if (!dailyLogTableExists) {
+                android.util.Log.w("StepTrackerModule", "journey_daily_log table doesn't exist, creating it...")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS journey_daily_log(
+                        id TEXT PRIMARY KEY,
+                        journeyId TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        trip_day_number INTEGER,
+                        is_paused INTEGER DEFAULT 0,
+                        current_checkpoint INTEGER,
+                        current_location_name TEXT,
+                        current_location_lat REAL,
+                        current_location_lon REAL,
+                        total_walked_km_in_journey REAL,
+                        progress_percent REAL,
+                        created_at TEXT,
+                        UNIQUE(journeyId, date),
+                        FOREIGN KEY(journeyId) REFERENCES journeys(journeyId)
+                    )
+                    """
+                )
+                android.util.Log.d("StepTrackerModule", "created journey_daily_log table")
+            }
+            
+            android.util.Log.d("StepTrackerModule", "Journey tables validation complete")
+        } catch (e: Exception) {
+            android.util.Log.e("StepTrackerModule", "Error ensuring journey tables exist: ${e.message}", e)
+        }
+    }
 
     private fun currentDate(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
@@ -323,11 +410,38 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun getWeeklyStatsJourney(journeyId: String, lang: String, offset: Int, promise: Promise) {
+        try {
+            promise.resolve(journeyRepo.getWeeklyStatsJourney(journeyId, offset, historyRepo.getDailyGoal()))
+        } catch (e: Exception) {
+            promise.reject("GET_WEEKLY_JOURNEY_STATS_ERROR", e)
+        }
+    }
+
+    @ReactMethod
     fun getMonthlyStats(lang: String, offset: Int, promise: Promise) {
         try {
             promise.resolve(statsRepo.getMonthlyStats(offset))
         } catch (e: Exception) {
             promise.reject("GET_MONTHLY_STATS_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun getMonthlyStatsJourney(journeyId: String, lang: String, offset: Int, promise: Promise) {
+        try {
+            promise.resolve(journeyRepo.getMonthlyStatsJourney(journeyId, offset, historyRepo.getDailyGoal()))
+        } catch (e: Exception) {
+            promise.reject("GET_MONTHLY_JOURNEY_STATS_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun getPerformanceStatsJourney(journeyId: String, date: String?, promise: Promise) {
+        try {
+            promise.resolve(journeyRepo.getPerformanceStatsJourney(journeyId, date, historyRepo.getDailyGoal()))
+        } catch (e: Exception) {
+            promise.reject("GET_PERFORMANCE_JOURNEY_STATS_ERROR", e)
         }
     }
 
@@ -392,6 +506,355 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         return when (prefsManager.getEnergyUnit()) {
             "kj" -> kcal * KCAL_TO_KJ to "kJ"
             else -> kcal to "kcal"
+        }
+    }
+
+    // Convert distance from KM based on user preferences - returns only the value
+    private fun convertDistanceFromKm(km: Double): Double {
+        return when (prefsManager.getDistanceUnit()) {
+            "miles" -> km * KM_TO_MILES
+            else -> km
+        }
+    }
+
+    // Convert energy from kcal based on user preferences - returns only the value
+    private fun convertEnergyFromKcal(kcal: Double): Double {
+        return when (prefsManager.getEnergyUnit()) {
+            "kj" -> kcal * KCAL_TO_KJ
+            else -> kcal
+        }
+    }
+
+    // Apply user preferences to journey data - replace distance values only
+    private fun applyPreferencesToJourney(journey: ReadableMap): WritableMap {
+        val resultMap = Arguments.createMap()
+        
+        // Copy all existing fields
+        journey.toHashMap().forEach { (key, value) ->
+            when (key) {
+                "total_distance_km" -> {
+                    // Convert and replace only the value
+                    val kmValue = (value as? Number)?.toDouble() ?: 0.0
+                    resultMap.putDouble("total_distance_km", convertDistanceFromKm(kmValue))
+                }
+                else -> {
+                    when (value) {
+                        is String -> resultMap.putString(key, value)
+                        is Double -> resultMap.putDouble(key, value)
+                        is Int -> resultMap.putInt(key, value)
+                        is Boolean -> resultMap.putBoolean(key, value)
+                        else -> {}
+                    }
+                }
+            }
+        }
+
+        return resultMap
+    }
+
+    // Apply user preferences to daily log - replace distance values only
+    private fun applyPreferencesToDailyLog(log: ReadableMap): WritableMap {
+        val resultMap = Arguments.createMap()
+        
+        // Copy all existing fields
+        log.toHashMap().forEach { (key, value) ->
+            when (key) {
+                "total_walked_km_in_journey" -> {
+                    // Convert and replace only the value
+                    val kmValue = (value as? Number)?.toDouble() ?: 0.0
+                    resultMap.putDouble("total_walked_km_in_journey", convertDistanceFromKm(kmValue))
+                }
+                else -> {
+                    when (value) {
+                        is String -> resultMap.putString(key, value)
+                        is Double -> resultMap.putDouble(key, value)
+                        is Int -> resultMap.putInt(key, value)
+                        is Boolean -> resultMap.putBoolean(key, value)
+                        else -> {}
+                    }
+                }
+            }
+        }
+
+        return resultMap
+    }
+
+    private fun applyPreferencesToJourneyStatsSummary(summary: ReadableMap): WritableMap {
+        val resultMap = Arguments.createMap()
+
+        summary.toHashMap().forEach { (key, value) ->
+            when (key) {
+                "total_walked_km", "today_walked_km" -> {
+                    val kmValue = (value as? Number)?.toDouble() ?: 0.0
+                    resultMap.putDouble(key, convertDistanceFromKm(kmValue))
+                }
+                else -> {
+                    when (value) {
+                        is String -> resultMap.putString(key, value)
+                        is Double -> resultMap.putDouble(key, value)
+                        is Int -> resultMap.putInt(key, value)
+                        is Boolean -> resultMap.putBoolean(key, value)
+                        null -> resultMap.putNull(key)
+                        else -> {}
+                    }
+                }
+            }
+        }
+
+        return resultMap
+    }
+
+    // ========================================================================
+    // JOURNEY METHODS
+    // ========================================================================
+
+    @ReactMethod
+    fun createJourney(
+        destinationName: String,
+        destinationLat: Double,
+        destinationLon: Double,
+        destinationAddress: String,
+        originName: String,
+        originLat: Double,
+        originLon: Double,
+        originAddress: String,
+        routeCoordsJson: String,
+        totalDistanceKm: Double,
+        checkpointsJson: String,
+        promise: Promise
+    ) {
+        try {
+            val journeyId = UUID.randomUUID().toString()
+            android.util.Log.d("StepTrackerModule", "Creating journey: $journeyId, dest: $destinationName, origin: $originName")
+            
+            val success = journeyRepo.createJourney(
+                journeyId, destinationName, destinationLat, destinationLon, destinationAddress,
+                originName, originLat, originLon, originAddress,
+                routeCoordsJson, totalDistanceKm, checkpointsJson
+            )
+
+            if (success) {
+                val result = Arguments.createMap().apply {
+                    putString("journeyId", journeyId)
+                    putString("createdAt", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date()))
+                }
+                android.util.Log.d("StepTrackerModule", "Journey created successfully: $journeyId")
+                promise.resolve(result)
+            } else {
+                android.util.Log.e("StepTrackerModule", "Failed to create journey: $journeyId (repository returned false)")
+                promise.reject("CREATE_JOURNEY_ERROR", "Failed to create journey (repository error)")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("StepTrackerModule", "Exception creating journey: ${e.message}", e)
+            promise.reject("CREATE_JOURNEY_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun getJourney(journeyId: String, promise: Promise) {
+        try {
+            val journey = journeyRepo.getJourney(journeyId)
+            if (journey != null) {
+                // Apply user preferences (km/miles conversion)
+                val result = applyPreferencesToJourney(journey)
+                promise.resolve(result)
+            } else {
+                promise.reject("JOURNEY_NOT_FOUND", "Journey not found: $journeyId")
+            }
+        } catch (e: Exception) {
+            promise.reject("GET_JOURNEY_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun updateJourneyProgress(
+        journeyId: String,
+        status: String,
+        currentCheckpoint: Int?,
+        currentLocationName: String?,
+        currentLocationLat: Double?,
+        currentLocationLon: Double?,
+        progressPercent: Double?,
+        walkedKmInJourney: Double?,
+        promise: Promise
+    ) {
+        try {
+            val success = journeyRepo.updateJourneyProgress(
+                journeyId, status, currentCheckpoint, currentLocationName,
+                currentLocationLat, currentLocationLon, progressPercent, walkedKmInJourney
+            )
+
+            if (success) {
+                val journey = journeyRepo.getJourney(journeyId)
+                if (journey != null) {
+                    // Apply user preferences
+                    val result = applyPreferencesToJourney(journey)
+                    promise.resolve(result)
+                } else {
+                    promise.reject("UPDATE_JOURNEY_ERROR", "Journey not found after update")
+                }
+            } else {
+                promise.reject("UPDATE_JOURNEY_ERROR", "Failed to update journey")
+            }
+        } catch (e: Exception) {
+            promise.reject("UPDATE_JOURNEY_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun pauseJourney(journeyId: String, promise: Promise) {
+        try {
+            val success = journeyRepo.updateJourneyProgress(
+                journeyId, "paused", null, null, null, null, null, null
+            )
+
+            if (success) {
+                promise.resolve(Arguments.createMap().apply {
+                    putString("status", "paused")
+                })
+            } else {
+                promise.reject("PAUSE_JOURNEY_ERROR", "Failed to pause journey")
+            }
+        } catch (e: Exception) {
+            promise.reject("PAUSE_JOURNEY_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun completeJourney(journeyId: String, promise: Promise) {
+        try {
+            val success = journeyRepo.updateJourneyProgress(
+                journeyId, "completed", null, null, null, null, null, null
+            )
+
+            if (success) {
+                promise.resolve(Arguments.createMap().apply {
+                    putString("status", "completed")
+                })
+            } else {
+                promise.reject("COMPLETE_JOURNEY_ERROR", "Failed to complete journey")
+            }
+        } catch (e: Exception) {
+            promise.reject("COMPLETE_JOURNEY_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun getJourneyDailyLog(journeyId: String, date: String?, promise: Promise) {
+        try {
+            val log = journeyRepo.getJourneyDailyLog(journeyId, date)
+            if (log != null) {
+                // Apply user preferences
+                val result = applyPreferencesToDailyLog(log)
+                promise.resolve(result)
+            } else {
+                promise.reject("LOG_NOT_FOUND", "Daily log not found")
+            }
+        } catch (e: Exception) {
+            promise.reject("GET_LOG_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun getJourneyStatsSummary(journeyId: String, date: String?, promise: Promise) {
+        try {
+            val summary = journeyRepo.getJourneyStatsSummary(journeyId, date)
+            val result = applyPreferencesToJourneyStatsSummary(summary)
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("GET_JOURNEY_STATS_SUMMARY_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun syncJourneyDailyLog(journeyId: String, promise: Promise) {
+        try {
+            val today = currentDate()
+            val syncedLog = journeyRepo.ensureJourneyDailyLog(journeyId, today)
+            if (syncedLog != null) {
+                promise.resolve(applyPreferencesToDailyLog(syncedLog))
+            } else {
+                promise.reject("SYNC_JOURNEY_DAILY_LOG_ERROR", "Daily log not found after sync")
+            }
+        } catch (e: Exception) {
+            promise.reject("SYNC_JOURNEY_DAILY_LOG_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun saveJourneyDailyLog(
+        journeyId: String,
+        date: String,
+        tripDayNumber: Int,
+        isPaused: Boolean,
+        currentCheckpoint: Int,
+        currentLocationName: String,
+        currentLocationLat: Double,
+        currentLocationLon: Double,
+        totalWalkedKm: Double,
+        progressPercent: Double,
+        promise: Promise
+    ) {
+        try {
+            val success = journeyRepo.saveJourneyDailyLog(
+                journeyId, date, tripDayNumber, isPaused, currentCheckpoint,
+                currentLocationName, currentLocationLat, currentLocationLon,
+                totalWalkedKm, progressPercent
+            )
+
+            if (success) {
+                val log = journeyRepo.getJourneyDailyLog(journeyId, date)
+                if (log != null) {
+                    // Apply user preferences
+                    val result = applyPreferencesToDailyLog(log)
+                    promise.resolve(result)
+                } else {
+                    promise.resolve(Arguments.createMap().apply {
+                        putString("savedAt", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date()))
+                    })
+                }
+            } else {
+                promise.reject("SAVE_LOG_ERROR", "Failed to save daily log")
+            }
+        } catch (e: Exception) {
+            promise.reject("SAVE_LOG_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun getAllJourneys(status: String?, promise: Promise) {
+        try {
+            val journeys = journeyRepo.getAllJourneys(status)
+            
+            // Apply user preferences to each journey
+            val resultArray = Arguments.createArray()
+            for (i in 0 until journeys.size()) {
+                val journey = journeys.getMap(i)
+                if (journey != null) {
+                    val result = applyPreferencesToJourney(journey)
+                    resultArray.pushMap(result)
+                }
+            }
+            
+            promise.resolve(resultArray)
+        } catch (e: Exception) {
+            promise.reject("GET_ALL_JOURNEYS_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun deleteJourney(journeyId: String, promise: Promise) {
+        try {
+            val success = journeyRepo.deleteJourney(journeyId)
+            if (success) {
+                promise.resolve(Arguments.createMap().apply {
+                    putBoolean("deleted", true)
+                })
+            } else {
+                promise.reject("DELETE_JOURNEY_ERROR", "Failed to delete journey")
+            }
+        } catch (e: Exception) {
+            promise.reject("DELETE_JOURNEY_ERROR", e)
         }
     }
 
