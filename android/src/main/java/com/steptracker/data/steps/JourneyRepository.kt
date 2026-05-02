@@ -19,6 +19,14 @@ class JourneyRepository(private val db: SQLiteDatabase) {
 
     private fun calculateCaloriesKcal(steps: Int): Double = steps * 0.04
 
+    private fun markJourneyCompleted(journeyId: String) {
+        val now = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date())
+        db.execSQL(
+            "UPDATE journeys SET status = 'completed', completed_at = ? WHERE journeyId = ? AND LOWER(TRIM(status)) != 'completed'",
+            arrayOf(now, journeyId)
+        )
+    }
+
     private fun computeWeekStartShift(date: LocalDate): Int {
         return when ((configRepo.get("week_start") ?: "monday").lowercase(Locale.getDefault())) {
             "sunday" -> date.dayOfWeek.value % 7
@@ -1104,6 +1112,7 @@ class JourneyRepository(private val db: SQLiteDatabase) {
 
         return try {
             val journey = getJourney(journeyId) ?: return null
+            val journeyStatus = (journey.getString("status") ?: "active").lowercase(Locale.getDefault())
             val currentTotalWalkedKm = if (
                 baseLog.hasKey("total_walked_km_in_journey") &&
                 !baseLog.isNull("total_walked_km_in_journey")
@@ -1112,13 +1121,67 @@ class JourneyRepository(private val db: SQLiteDatabase) {
             } else {
                 0.0
             }
-            val deltaKm = deltaSteps * 0.0008
-            val nextTotalWalkedKm = currentTotalWalkedKm + deltaKm
             val totalDistanceKm = if (journey.hasKey("total_distance_km") && !journey.isNull("total_distance_km")) {
                 journey.getDouble("total_distance_km")
             } else {
                 0.0
             }
+
+            val tripDayNumber = if (baseLog.hasKey("trip_day_number")) baseLog.getInt("trip_day_number") else 1
+            val isPaused = if (baseLog.hasKey("is_paused")) baseLog.getBoolean("is_paused") else false
+            val currentCheckpoint = if (baseLog.hasKey("current_checkpoint")) baseLog.getInt("current_checkpoint") else 0
+            val currentLocationName = if (baseLog.hasKey("current_location_name") && !baseLog.isNull("current_location_name")) {
+                baseLog.getString("current_location_name") ?: ""
+            } else {
+                ""
+            }
+            val currentLocationLat = if (baseLog.hasKey("current_location_lat") && !baseLog.isNull("current_location_lat")) {
+                baseLog.getDouble("current_location_lat")
+            } else {
+                0.0
+            }
+            val currentLocationLon = if (baseLog.hasKey("current_location_lon") && !baseLog.isNull("current_location_lon")) {
+                baseLog.getDouble("current_location_lon")
+            } else {
+                0.0
+            }
+
+            val remainingKm = if (totalDistanceKm > 0) totalDistanceKm - currentTotalWalkedKm else null
+            if (remainingKm != null && remainingKm <= 0.0) {
+                val success = saveJourneyDailyLog(
+                    journeyId,
+                    queryDate,
+                    tripDayNumber,
+                    isPaused,
+                    currentCheckpoint,
+                    currentLocationName,
+                    currentLocationLat,
+                    currentLocationLon,
+                    totalDistanceKm,
+                    100.0
+                )
+
+                if (success && journeyStatus != "completed") {
+                    markJourneyCompleted(journeyId)
+                }
+
+                return if (success) getJourneyDailyLog(journeyId, queryDate) else null
+            }
+
+            if (journeyStatus == "completed") {
+                return baseLog
+            }
+
+            val deltaKm = deltaSteps * 0.0008
+            var appliedDeltaKm = deltaKm
+            var completedNow = false
+
+            if (remainingKm != null && deltaKm >= remainingKm) {
+                appliedDeltaKm = maxOf(remainingKm, 0.0)
+                completedNow = appliedDeltaKm > 0.0
+            }
+
+            val nextTotalWalkedKm = currentTotalWalkedKm + appliedDeltaKm
             val progressPercent = if (totalDistanceKm > 0) {
                 minOf((nextTotalWalkedKm / totalDistanceKm) * 100.0, 100.0)
             } else {
@@ -1128,30 +1191,31 @@ class JourneyRepository(private val db: SQLiteDatabase) {
             val success = saveJourneyDailyLog(
                 journeyId,
                 queryDate,
-                if (baseLog.hasKey("trip_day_number")) baseLog.getInt("trip_day_number") else 1,
-                if (baseLog.hasKey("is_paused")) baseLog.getBoolean("is_paused") else false,
-                if (baseLog.hasKey("current_checkpoint")) baseLog.getInt("current_checkpoint") else 0,
-                if (baseLog.hasKey("current_location_name") && !baseLog.isNull("current_location_name")) {
-                    baseLog.getString("current_location_name") ?: ""
-                } else {
-                    ""
-                },
-                if (baseLog.hasKey("current_location_lat") && !baseLog.isNull("current_location_lat")) {
-                    baseLog.getDouble("current_location_lat")
-                } else {
-                    0.0
-                },
-                if (baseLog.hasKey("current_location_lon") && !baseLog.isNull("current_location_lon")) {
-                    baseLog.getDouble("current_location_lon")
-                } else {
-                    0.0
-                },
+                tripDayNumber,
+                isPaused,
+                currentCheckpoint,
+                currentLocationName,
+                currentLocationLat,
+                currentLocationLon,
                 nextTotalWalkedKm,
                 progressPercent
             )
 
             if (success) {
-                incrementJourneyCountedSteps(journeyId, queryDate, hour, deltaSteps)
+                val effectiveDeltaSteps = if (appliedDeltaKm < deltaKm) {
+                    val cappedSteps = Math.round(appliedDeltaKm / 0.0008).toInt()
+                    minOf(deltaSteps, maxOf(cappedSteps, 0))
+                } else {
+                    deltaSteps
+                }
+
+                if (effectiveDeltaSteps > 0) {
+                    incrementJourneyCountedSteps(journeyId, queryDate, hour, effectiveDeltaSteps)
+                }
+
+                if (completedNow && journeyStatus != "completed") {
+                    markJourneyCompleted(journeyId)
+                }
             }
 
             if (success) getJourneyDailyLog(journeyId, queryDate) else null

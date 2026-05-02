@@ -18,6 +18,8 @@ class StepTrackerService : Service(), SensorEventListener {
     companion object {
         const val CHANNEL_ID = "steptracker_channel"
         const val NOTIF_ID = 1
+        const val JOURNEY_CHANNEL_ID = "journey_updates"
+        const val JOURNEY_NOTIF_ID = 2
 
         const val ACTION_STEPS_UPDATE = "com.steptracker.STEPS_UPDATE"
         const val EXTRA_STEPS = "steps_today"
@@ -42,6 +44,26 @@ class StepTrackerService : Service(), SensorEventListener {
                 .setOnlyAlertOnce(true)
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
                 .build()
+
+        private fun buildJourneyCompletedNotification(
+            ctx: Context,
+            destinationName: String?
+        ): Notification {
+            val message = if (!destinationName.isNullOrBlank()) {
+                "Llegaste a $destinationName"
+            } else {
+                "Has completado tu journey"
+            }
+
+            return NotificationCompat.Builder(ctx, JOURNEY_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Journey completado")
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+        }
     }
 
     // Repos
@@ -228,7 +250,32 @@ class StepTrackerService : Service(), SensorEventListener {
         }
 
         try {
-            journeyRepo.incrementActiveJourneyProgress(deltaSteps, date, hour)
+            val activeJourney = journeyRepo.getActiveJourney() ?: return
+            val journeyId = activeJourney.getString("journeyId") ?: return
+            val wasCompleted = activeJourney.getString("status")
+                ?.trim()
+                ?.lowercase(Locale.getDefault()) == "completed"
+            val destinationName = activeJourney.getString("destination_name")
+
+            journeyRepo.incrementJourneyProgressByDelta(journeyId, deltaSteps, date, hour)
+
+            if (!wasCompleted) {
+                val updatedJourney = journeyRepo.getJourney(journeyId)
+                val isCompleted = updatedJourney
+                    ?.getString("status")
+                    ?.trim()
+                    ?.lowercase(Locale.getDefault()) == "completed"
+
+                if (isCompleted) {
+                    val resolvedDestination =
+                        updatedJourney?.getString("destination_name") ?: destinationName
+                    val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    mgr.notify(
+                        JOURNEY_NOTIF_ID,
+                        buildJourneyCompletedNotification(this, resolvedDestination)
+                    )
+                }
+            }
         } catch (_: Exception) {
         }
     }
@@ -248,6 +295,18 @@ class StepTrackerService : Service(), SensorEventListener {
                     "Conteo de pasos en segundo plano",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply { setShowBadge(false) }
+            )
+        }
+        if (nm.getNotificationChannel(JOURNEY_CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    JOURNEY_CHANNEL_ID,
+                    "Actualizaciones de journey",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Notificaciones cuando un journey se completa"
+                    setShowBadge(true)
+                }
             )
         }
     }
