@@ -410,9 +410,10 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun getWeeklyStatsJourney(journeyId: String, lang: String, offset: Int, promise: Promise) {
+    fun getWeeklyStatsJourney(journeyId: String, lang: String, offset: Int, referenceDate: String?, promise: Promise) {
         try {
-            promise.resolve(journeyRepo.getWeeklyStatsJourney(journeyId, offset, historyRepo.getDailyGoal()))
+            val stats = journeyRepo.getWeeklyStatsJourney(journeyId, offset, historyRepo.getDailyGoal(), referenceDate)
+            promise.resolve(applyPreferencesToJourneyPeriodStats(stats))
         } catch (e: Exception) {
             promise.reject("GET_WEEKLY_JOURNEY_STATS_ERROR", e)
         }
@@ -428,9 +429,10 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
-    fun getMonthlyStatsJourney(journeyId: String, lang: String, offset: Int, promise: Promise) {
+    fun getMonthlyStatsJourney(journeyId: String, lang: String, offset: Int, referenceDate: String?, promise: Promise) {
         try {
-            promise.resolve(journeyRepo.getMonthlyStatsJourney(journeyId, offset, historyRepo.getDailyGoal()))
+            val stats = journeyRepo.getMonthlyStatsJourney(journeyId, offset, historyRepo.getDailyGoal(), referenceDate)
+            promise.resolve(applyPreferencesToJourneyPeriodStats(stats))
         } catch (e: Exception) {
             promise.reject("GET_MONTHLY_JOURNEY_STATS_ERROR", e)
         }
@@ -439,7 +441,8 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun getPerformanceStatsJourney(journeyId: String, date: String?, promise: Promise) {
         try {
-            promise.resolve(journeyRepo.getPerformanceStatsJourney(journeyId, date, historyRepo.getDailyGoal()))
+            val stats = journeyRepo.getPerformanceStatsJourney(journeyId, date, historyRepo.getDailyGoal())
+            promise.resolve(applyPreferencesToJourneyPerformanceStats(stats))
         } catch (e: Exception) {
             promise.reject("GET_PERFORMANCE_JOURNEY_STATS_ERROR", e)
         }
@@ -509,7 +512,20 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    // Convert distance from KM based on user preferences - returns only the value
+    private fun getDistanceUnitLabel(): String {
+        return when (prefsManager.getDistanceUnit()) {
+            "miles" -> "mi"
+            else -> "km"
+        }
+    }
+
+    private fun getEnergyUnitLabel(): String {
+        return when (prefsManager.getEnergyUnit()) {
+            "kj" -> "kJ"
+            else -> "kcal"
+        }
+    }
+
     private fun convertDistanceFromKm(km: Double): Double {
         return when (prefsManager.getDistanceUnit()) {
             "miles" -> km * KM_TO_MILES
@@ -517,7 +533,6 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    // Convert energy from kcal based on user preferences - returns only the value
     private fun convertEnergyFromKcal(kcal: Double): Double {
         return when (prefsManager.getEnergyUnit()) {
             "kj" -> kcal * KCAL_TO_KJ
@@ -525,81 +540,179 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    // Apply user preferences to journey data - replace distance values only
+    private fun convertSpeedFromKmh(kmh: Double): Double {
+        return when (prefsManager.getDistanceUnit()) {
+            "miles" -> kmh * KM_TO_MILES
+            else -> kmh
+        }
+    }
+
+    private fun putPrimitiveValue(map: WritableMap, key: String, value: Any?) {
+        when (value) {
+            null -> map.putNull(key)
+            is String -> map.putString(key, value)
+            is Boolean -> map.putBoolean(key, value)
+            is Int -> map.putInt(key, value)
+            is Long -> map.putDouble(key, value.toDouble())
+            is Float -> map.putDouble(key, value.toDouble())
+            is Double -> map.putDouble(key, value)
+            is Number -> map.putDouble(key, value.toDouble())
+        }
+    }
+
+    private fun addDisplayDistanceToCheckpoints(checkpointsJson: String): String {
+        return try {
+            val checkpoints = JSONArray(checkpointsJson)
+            for (index in 0 until checkpoints.length()) {
+                val checkpoint = checkpoints.optJSONObject(index) ?: continue
+                val rawKm = checkpoint.optDouble("km", 0.0)
+                checkpoint.put("display_distance", convertDistanceFromKm(rawKm))
+            }
+            checkpoints.toString()
+        } catch (_: Exception) {
+            checkpointsJson
+        }
+    }
+
+    private fun convertJourneyDays(days: Any?): WritableArray {
+        val result = Arguments.createArray()
+
+        if (days !is List<*>) {
+            return result
+        }
+
+        days.forEach { dayValue ->
+            if (dayValue !is Map<*, *>) {
+                return@forEach
+            }
+
+            val dayMap = Arguments.createMap()
+            dayValue.forEach { (rawKey, rawValue) ->
+                val key = rawKey as? String ?: return@forEach
+                when (key) {
+                    "distance" -> dayMap.putDouble(key, convertDistanceFromKm((rawValue as? Number)?.toDouble() ?: 0.0))
+                    "calories" -> dayMap.putDouble(key, convertEnergyFromKcal((rawValue as? Number)?.toDouble() ?: 0.0))
+                    else -> putPrimitiveValue(dayMap, key, rawValue)
+                }
+            }
+            result.pushMap(dayMap)
+        }
+
+        return result
+    }
+
     private fun applyPreferencesToJourney(journey: ReadableMap): WritableMap {
         val resultMap = Arguments.createMap()
+        var totalDistanceKm = 0.0
         
-        // Copy all existing fields
         journey.toHashMap().forEach { (key, value) ->
             when (key) {
                 "total_distance_km" -> {
-                    // Convert and replace only the value
-                    val kmValue = (value as? Number)?.toDouble() ?: 0.0
-                    resultMap.putDouble("total_distance_km", convertDistanceFromKm(kmValue))
+                    totalDistanceKm = (value as? Number)?.toDouble() ?: 0.0
+                    resultMap.putDouble("total_distance_km", totalDistanceKm)
+                }
+                "checkpoints" -> {
+                    val checkpointsJson = value as? String ?: "[]"
+                    resultMap.putString("checkpoints", addDisplayDistanceToCheckpoints(checkpointsJson))
                 }
                 else -> {
-                    when (value) {
-                        is String -> resultMap.putString(key, value)
-                        is Double -> resultMap.putDouble(key, value)
-                        is Int -> resultMap.putInt(key, value)
-                        is Boolean -> resultMap.putBoolean(key, value)
-                        else -> {}
-                    }
+                    putPrimitiveValue(resultMap, key, value)
                 }
             }
         }
+
+        resultMap.putDouble("display_total_distance", convertDistanceFromKm(totalDistanceKm))
+        resultMap.putString("distance_unit", getDistanceUnitLabel())
 
         return resultMap
     }
 
-    // Apply user preferences to daily log - replace distance values only
     private fun applyPreferencesToDailyLog(log: ReadableMap): WritableMap {
         val resultMap = Arguments.createMap()
+        var totalWalkedKm = 0.0
         
-        // Copy all existing fields
         log.toHashMap().forEach { (key, value) ->
             when (key) {
                 "total_walked_km_in_journey" -> {
-                    // Convert and replace only the value
-                    val kmValue = (value as? Number)?.toDouble() ?: 0.0
-                    resultMap.putDouble("total_walked_km_in_journey", convertDistanceFromKm(kmValue))
+                    totalWalkedKm = (value as? Number)?.toDouble() ?: 0.0
+                    resultMap.putDouble("total_walked_km_in_journey", totalWalkedKm)
                 }
                 else -> {
-                    when (value) {
-                        is String -> resultMap.putString(key, value)
-                        is Double -> resultMap.putDouble(key, value)
-                        is Int -> resultMap.putInt(key, value)
-                        is Boolean -> resultMap.putBoolean(key, value)
-                        else -> {}
-                    }
+                    putPrimitiveValue(resultMap, key, value)
                 }
             }
         }
+
+        resultMap.putDouble(
+            "display_total_walked_km_in_journey",
+            convertDistanceFromKm(totalWalkedKm),
+        )
+        resultMap.putString("distance_unit", getDistanceUnitLabel())
 
         return resultMap
     }
 
     private fun applyPreferencesToJourneyStatsSummary(summary: ReadableMap): WritableMap {
         val resultMap = Arguments.createMap()
+        var totalWalkedKm = 0.0
+        var todayWalkedKm = 0.0
 
         summary.toHashMap().forEach { (key, value) ->
             when (key) {
-                "total_walked_km", "today_walked_km" -> {
-                    val kmValue = (value as? Number)?.toDouble() ?: 0.0
-                    resultMap.putDouble(key, convertDistanceFromKm(kmValue))
+                "total_walked_km" -> {
+                    totalWalkedKm = (value as? Number)?.toDouble() ?: 0.0
+                    resultMap.putDouble(key, totalWalkedKm)
+                }
+                "today_walked_km" -> {
+                    todayWalkedKm = (value as? Number)?.toDouble() ?: 0.0
+                    resultMap.putDouble(key, todayWalkedKm)
                 }
                 else -> {
-                    when (value) {
-                        is String -> resultMap.putString(key, value)
-                        is Double -> resultMap.putDouble(key, value)
-                        is Int -> resultMap.putInt(key, value)
-                        is Boolean -> resultMap.putBoolean(key, value)
-                        null -> resultMap.putNull(key)
-                        else -> {}
-                    }
+                    putPrimitiveValue(resultMap, key, value)
                 }
             }
         }
+
+        resultMap.putDouble("display_total_walked_km", convertDistanceFromKm(totalWalkedKm))
+        resultMap.putDouble("display_today_walked_km", convertDistanceFromKm(todayWalkedKm))
+        resultMap.putString("distance_unit", getDistanceUnitLabel())
+
+        return resultMap
+    }
+
+    private fun applyPreferencesToJourneyPeriodStats(stats: ReadableMap): WritableMap {
+        val resultMap = Arguments.createMap()
+
+        stats.toHashMap().forEach { (key, value) ->
+            when (key) {
+                "totalDistance" -> resultMap.putDouble(key, convertDistanceFromKm((value as? Number)?.toDouble() ?: 0.0))
+                "totalCalories" -> resultMap.putDouble(key, convertEnergyFromKcal((value as? Number)?.toDouble() ?: 0.0))
+                "days" -> resultMap.putArray(key, convertJourneyDays(value))
+                else -> putPrimitiveValue(resultMap, key, value)
+            }
+        }
+
+        resultMap.putString("distanceUnit", getDistanceUnitLabel())
+        resultMap.putString("energyUnit", getEnergyUnitLabel())
+
+        return resultMap
+    }
+
+    private fun applyPreferencesToJourneyPerformanceStats(stats: ReadableMap): WritableMap {
+        val resultMap = Arguments.createMap()
+
+        stats.toHashMap().forEach { (key, value) ->
+            when (key) {
+                "todayWalkedKm" -> resultMap.putDouble(key, convertDistanceFromKm((value as? Number)?.toDouble() ?: 0.0))
+                "calories" -> resultMap.putDouble(key, convertEnergyFromKcal((value as? Number)?.toDouble() ?: 0.0))
+                "averageSpeedKmh" -> resultMap.putDouble(key, convertSpeedFromKmh((value as? Number)?.toDouble() ?: 0.0))
+                else -> putPrimitiveValue(resultMap, key, value)
+            }
+        }
+
+        resultMap.putString("distanceUnit", getDistanceUnitLabel())
+        resultMap.putString("energyUnit", getEnergyUnitLabel())
+        resultMap.putString("speedUnit", if (getDistanceUnitLabel() == "mi") "mi/h" else "km/h")
 
         return resultMap
     }

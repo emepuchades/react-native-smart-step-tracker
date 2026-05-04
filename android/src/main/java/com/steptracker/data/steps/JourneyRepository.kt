@@ -19,6 +19,18 @@ class JourneyRepository(private val db: SQLiteDatabase) {
 
     private fun calculateCaloriesKcal(steps: Int): Double = steps * 0.04
 
+    private fun resolveReferenceDate(referenceDate: String?): LocalDate {
+        return try {
+            if (referenceDate.isNullOrBlank()) {
+                LocalDate.now()
+            } else {
+                LocalDate.parse(referenceDate)
+            }
+        } catch (_: Exception) {
+            LocalDate.now()
+        }
+    }
+
     private fun markJourneyCompleted(journeyId: String) {
         val now = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date())
         db.execSQL(
@@ -651,8 +663,13 @@ class JourneyRepository(private val db: SQLiteDatabase) {
         return summary
     }
 
-    fun getWeeklyStatsJourney(journeyId: String, offset: Int, dailyGoal: Int): WritableMap {
-        val today = LocalDate.now()
+    fun getWeeklyStatsJourney(
+        journeyId: String,
+        offset: Int,
+        dailyGoal: Int,
+        referenceDate: String? = null,
+    ): WritableMap {
+        val today = resolveReferenceDate(referenceDate)
         val shift = computeWeekStartShift(today)
         val start = today.minusDays(shift.toLong()).plusWeeks(offset.toLong())
         val end = start.plusDays(6)
@@ -747,8 +764,13 @@ class JourneyRepository(private val db: SQLiteDatabase) {
         }
     }
 
-    fun getMonthlyStatsJourney(journeyId: String, offset: Int, dailyGoal: Int): WritableMap {
-        val today = LocalDate.now()
+    fun getMonthlyStatsJourney(
+        journeyId: String,
+        offset: Int,
+        dailyGoal: Int,
+        referenceDate: String? = null,
+    ): WritableMap {
+        val today = resolveReferenceDate(referenceDate)
         val target = today.plusMonths(offset.toLong())
         val monthStart = target.withDayOfMonth(1)
         val monthEnd = target.withDayOfMonth(target.lengthOfMonth())
