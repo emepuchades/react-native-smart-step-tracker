@@ -1,6 +1,14 @@
 package com.steptracker.bridge
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -28,6 +36,12 @@ import java.time.temporal.TemporalAdjusters
 class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
+    private data class BadgeNotificationPayload(
+        val key: String,
+        val title: String,
+        val description: String,
+    )
+
     override fun getName() = "StepTrackerModule"
 
     companion object {
@@ -35,6 +49,8 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         private const val KM_TO_MILES = 0.621371
         private const val KCAL_PER_STEP = 0.04
         private const val KCAL_TO_KJ = 4.184
+        private const val BADGE_CHANNEL_ID = "badge_unlocks_channel"
+        private const val BADGE_NOTIFICATION_ID_BASE = 9100
     }
 
     private val dbHelper = StepsDatabaseHelper(reactContext)
@@ -130,6 +146,15 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
     private fun currentDate(): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+
+    private fun refreshForegroundNotification() {
+        try {
+            val stepsToday = historyRepo.getStepsForDate(currentDate()).coerceAtLeast(0)
+            StepTrackerService.updateNotificationExternally(reactContext, stepsToday)
+        } catch (e: Exception) {
+            android.util.Log.w("StepTrackerModule", "Unable to refresh notification", e)
+        }
+    }
 
     private fun computeWeekStartDate(today: LocalDate, start: String): LocalDate {
         val weekStartDay = when (start.lowercase()) {
@@ -457,10 +482,25 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    @ReactMethod fun setUserLanguage(lang: String) = prefsManager.setLanguage(lang)
+    @ReactMethod
+    fun setUserLanguage(lang: String) {
+        prefsManager.setLanguage(lang)
+        refreshForegroundNotification()
+    }
+
     @ReactMethod fun setWeekStart(day: String) = prefsManager.setWeekStart(day)
-    @ReactMethod fun setDistanceUnit(unit: String) = prefsManager.setDistanceUnit(unit)
-    @ReactMethod fun setEnergyUnit(unit: String) = prefsManager.setEnergyUnit(unit)
+
+    @ReactMethod
+    fun setDistanceUnit(unit: String) {
+        prefsManager.setDistanceUnit(unit)
+        refreshForegroundNotification()
+    }
+
+    @ReactMethod
+    fun setEnergyUnit(unit: String) {
+        prefsManager.setEnergyUnit(unit)
+        refreshForegroundNotification()
+    }
 
     @ReactMethod
     fun getUserPreferences(promise: Promise) {
@@ -468,6 +508,53 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             promise.resolve(prefsManager.getUserPreferences())
         } catch (e: Exception) {
             promise.reject("ERROR_PREFS", e)
+        }
+    }
+
+    @ReactMethod
+    fun processUnlockedBadgesForNotifications(unlockedBadgesJson: String, promise: Promise) {
+        try {
+            val unlockedBadges = parseBadgeNotificationPayloads(unlockedBadgesJson)
+            val unlockedKeys = unlockedBadges.map { it.key }.filter { it.isNotBlank() }.toSet()
+
+            if (!prefsManager.areBadgeNotificationsPrimed()) {
+                prefsManager.setNotifiedBadgeKeys(prefsManager.getNotifiedBadgeKeys() + unlockedKeys)
+                prefsManager.setBadgeNotificationsPrimed(true)
+                promise.resolve(0)
+                return
+            }
+
+            if (unlockedBadges.isEmpty()) {
+                promise.resolve(0)
+                return
+            }
+
+            if (!canPostBadgeNotifications()) {
+                promise.resolve(0)
+                return
+            }
+
+            createBadgeNotificationChannelIfNeeded()
+
+            val notifiedKeys = prefsManager.getNotifiedBadgeKeys().toMutableSet()
+            var notifiedCount = 0
+
+            unlockedBadges
+                .filter { it.key.isNotBlank() && !notifiedKeys.contains(it.key) }
+                .forEach { badge ->
+                    if (showBadgeUnlockNotification(badge)) {
+                        notifiedKeys.add(badge.key)
+                        notifiedCount += 1
+                    }
+                }
+
+            if (notifiedCount > 0) {
+                prefsManager.setNotifiedBadgeKeys(notifiedKeys)
+            }
+
+            promise.resolve(notifiedCount)
+        } catch (e: Exception) {
+            promise.reject("BADGE_NOTIFICATION_ERROR", e)
         }
     }
 
@@ -493,6 +580,126 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             DayOfWeek.FRIDAY -> "fri"
             DayOfWeek.SATURDAY -> "sat"
             DayOfWeek.SUNDAY -> "sun"
+        }
+    }
+
+    private fun parseBadgeNotificationPayloads(rawJson: String): List<BadgeNotificationPayload> {
+        if (rawJson.isBlank()) {
+            return emptyList()
+        }
+
+        val jsonArray = JSONArray(rawJson)
+        val payloads = mutableListOf<BadgeNotificationPayload>()
+
+        for (index in 0 until jsonArray.length()) {
+            val item = jsonArray.optJSONObject(index) ?: continue
+            val key = item.optString("key").trim()
+            if (key.isEmpty()) {
+                continue
+            }
+
+            payloads.add(
+                BadgeNotificationPayload(
+                    key = key,
+                    title = item.optString("title").trim(),
+                    description = item.optString("description").trim(),
+                )
+            )
+        }
+
+        return payloads.distinctBy { it.key }
+    }
+
+    private fun canPostBadgeNotifications(): Boolean {
+        if (!NotificationManagerCompat.from(reactContext).areNotificationsEnabled()) {
+            return false
+        }
+
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                reactContext,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun createBadgeNotificationChannelIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+
+        val notificationManager = reactContext.getSystemService(NotificationManager::class.java)
+            ?: return
+
+        if (notificationManager.getNotificationChannel(BADGE_CHANNEL_ID) != null) {
+            return
+        }
+
+        val isSpanish = prefsManager.getLanguage().lowercase(Locale.ROOT).startsWith("es")
+        val channelName = if (isSpanish) "Insignias desbloqueadas" else "Unlocked badges"
+        val channelDescription = if (isSpanish) {
+            "Notificaciones cuando desbloqueas una insignia nueva"
+        } else {
+            "Notifications when you unlock a new badge"
+        }
+
+        notificationManager.createNotificationChannel(
+            NotificationChannel(
+                BADGE_CHANNEL_ID,
+                channelName,
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = channelDescription
+                setShowBadge(true)
+            },
+        )
+    }
+
+    private fun showBadgeUnlockNotification(badge: BadgeNotificationPayload): Boolean {
+        return try {
+            val isSpanish = prefsManager.getLanguage().lowercase(Locale.ROOT).startsWith("es")
+            val contentTitle = if (isSpanish) "Nueva insignia desbloqueada" else "New badge unlocked"
+            val contentText = badge.title.ifBlank {
+                if (isSpanish) "Has ganado una insignia" else "You earned a badge"
+            }
+            val expandedText = badge.description.ifBlank { contentText }
+
+            val launchIntent = reactContext.packageManager
+                .getLaunchIntentForPackage(reactContext.packageName)
+                ?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+
+            val contentIntent = launchIntent?.let {
+                PendingIntent.getActivity(
+                    reactContext,
+                    BADGE_NOTIFICATION_ID_BASE + badge.key.hashCode(),
+                    it,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+            }
+
+            val notification = NotificationCompat.Builder(reactContext, BADGE_CHANNEL_ID)
+                .setSmallIcon(com.steptracker.R.drawable.ic_notif_journey)
+                .setContentTitle(contentTitle)
+                .setContentText(contentText)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(expandedText))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .apply {
+                    if (contentIntent != null) {
+                        setContentIntent(contentIntent)
+                    }
+                }
+                .build()
+
+            NotificationManagerCompat.from(reactContext).notify(
+                BADGE_NOTIFICATION_ID_BASE + Math.abs(badge.key.hashCode()),
+                notification,
+            )
+            true
+        } catch (error: Exception) {
+            android.util.Log.w("StepTrackerModule", "Unable to post badge notification for ${badge.key}", error)
+            false
         }
     }
 
@@ -747,6 +954,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             )
 
             if (success) {
+                refreshForegroundNotification()
                 val result = Arguments.createMap().apply {
                     putString("journeyId", journeyId)
                     putString("createdAt", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault()).format(Date()))
@@ -798,6 +1006,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             )
 
             if (success) {
+                refreshForegroundNotification()
                 val journey = journeyRepo.getJourney(journeyId)
                 if (journey != null) {
                     // Apply user preferences
@@ -822,6 +1031,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             )
 
             if (success) {
+                refreshForegroundNotification()
                 promise.resolve(Arguments.createMap().apply {
                     putString("status", "paused")
                 })
@@ -841,6 +1051,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             )
 
             if (success) {
+                refreshForegroundNotification()
                 promise.resolve(Arguments.createMap().apply {
                     putString("status", "completed")
                 })
@@ -885,6 +1096,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             val today = currentDate()
             val syncedLog = journeyRepo.ensureJourneyDailyLog(journeyId, today)
             if (syncedLog != null) {
+                refreshForegroundNotification()
                 promise.resolve(applyPreferencesToDailyLog(syncedLog))
             } else {
                 promise.reject("SYNC_JOURNEY_DAILY_LOG_ERROR", "Daily log not found after sync")
@@ -916,6 +1128,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             )
 
             if (success) {
+                refreshForegroundNotification()
                 val log = journeyRepo.getJourneyDailyLog(journeyId, date)
                 if (log != null) {
                     // Apply user preferences
@@ -960,6 +1173,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         try {
             val success = journeyRepo.deleteJourney(journeyId)
             if (success) {
+                refreshForegroundNotification()
                 promise.resolve(Arguments.createMap().apply {
                     putBoolean("deleted", true)
                 })

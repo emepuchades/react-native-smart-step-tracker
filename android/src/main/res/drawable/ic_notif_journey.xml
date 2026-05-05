@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pin de localización con check — monochrome para small icon de notificación de journey -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Cuerpo del pin -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2C8.686,2 6,4.686 6,8c0,5 6,13 6,13s6,-8 6,-13C18,4.686 15.314,2 12,2z" />
+    <!-- Check blanco dentro (hueco) usando recorte visual -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#000000"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M9.5,8l1.5,1.5 3,-3" />
+</vector>

@@ -10,6 +10,7 @@ import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.*
+import kotlin.math.ceil
 
 class JourneyRepository(private val db: SQLiteDatabase) {
 
@@ -998,14 +999,19 @@ class JourneyRepository(private val db: SQLiteDatabase) {
         } else {
             calculateDistanceKm(todaySteps)
         }
-
-        val stepsPerMinute = if (activeMinutes > 0) {
-            Math.round(todaySteps.toDouble() / activeMinutes).toInt()
+        val estimatedActiveMinutes = if (todaySteps > 0) {
+            ceil(todaySteps / 98.0).toInt()
         } else {
             0
         }
-        val averageSpeedKmh = if (activeMinutes > 0) {
-            todayWalkedKm / (activeMinutes / 60.0)
+
+        val stepsPerMinute = if (estimatedActiveMinutes > 0) {
+            Math.round(todaySteps.toDouble() / estimatedActiveMinutes).toInt()
+        } else {
+            0
+        }
+        val averageSpeedKmh = if (estimatedActiveMinutes > 0) {
+            todayWalkedKm / (estimatedActiveMinutes / 60.0)
         } else {
             0.0
         }
@@ -1038,7 +1044,7 @@ class JourneyRepository(private val db: SQLiteDatabase) {
             putInt("dailyGoal", dailyGoal)
             putDouble("goalProgressPercent", goalProgressPercent)
             putInt("remainingSteps", remainingSteps)
-            putInt("activeMinutes", activeMinutes)
+            putInt("activeMinutes", estimatedActiveMinutes)
             putInt("activeHoursCount", activeHours.size)
             putString("peakHour", peakHourLabel)
             putInt("peakHourSteps", peakHourSteps)

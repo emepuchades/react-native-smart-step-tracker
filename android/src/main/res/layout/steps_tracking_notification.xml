@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#FFFFFF"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <!-- Pasos del dia -->
+    <TextView
+        android:id="@+id/steps_notification_progress_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="32.5k / 40k pasos"
+        android:textColor="#0F172A"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <ProgressBar
+        android:id="@+id/steps_notification_progress_bar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="5dp"
+        android:layout_marginTop="5dp"
+        android:indeterminate="false"
+        android:max="1000"
+        android:progress="0"
+        android:progressDrawable="@drawable/steps_notification_progress"
+        android:minHeight="5dp"
+        android:maxHeight="5dp" />
+
+    <!-- Stats: calorias + distancia -->
+    <TextView
+        android:id="@+id/steps_notification_stats_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="&#x26A1; 1,850 kcal  &#x00B7;  &#x2191; 26.0 km"
+        android:textColor="#52606D"
+        android:textSize="11sp" />
+
+    <!-- Journey (oculto si no hay journey activo) -->
+    <LinearLayout
+        android:id="@+id/steps_notification_journey_section"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="&#x27A6;"
+            android:textColor="#10B981"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/steps_notification_journey_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="5dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Madrid &#x2192; Roma &#x00B7; 42% &#x00B7; 5.0/12.0 km"
+            android:textColor="#10B981"
+            android:textSize="11sp" />
+    </LinearLayout>
+</LinearLayout>
