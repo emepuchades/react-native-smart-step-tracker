@@ -12,6 +12,11 @@ class UserPreferencesManager(private val config: ConfigRepository) {
     private val KEY_ENERGY_UNIT = "energy_unit"
     private val KEY_NOTIFIED_BADGE_KEYS = "notified_badge_keys"
     private val KEY_BADGE_NOTIFICATIONS_PRIMED = "badge_notifications_primed"
+    private val KEY_BODY_WEIGHT = "body_weight"
+    private val KEY_BODY_HEIGHT = "body_height"
+    private val KEY_BODY_AGE = "body_age"
+    private val KEY_BACKUP_FREQUENCY = "backup_frequency"
+    private val KEY_LAST_BACKUP_DATE = "last_backup_date"
 
     fun getLanguage(): String =
         config.get(KEY_LANGUAGE) ?: "en"
@@ -24,6 +29,21 @@ class UserPreferencesManager(private val config: ConfigRepository) {
 
     fun getEnergyUnit(): String =
         config.get(KEY_ENERGY_UNIT) ?: "kcal"
+
+    fun getBodyWeight(): Double? =
+        config.get(KEY_BODY_WEIGHT)?.toDoubleOrNull()
+
+    fun getBodyHeight(): Double? =
+        config.get(KEY_BODY_HEIGHT)?.toDoubleOrNull()
+
+    fun getBodyAge(): Int? =
+        config.get(KEY_BODY_AGE)?.toIntOrNull()
+
+    fun getBackupFrequency(): String =
+        config.get(KEY_BACKUP_FREQUENCY) ?: "none"
+
+    fun getLastBackupDate(): String? =
+        config.get(KEY_LAST_BACKUP_DATE)
 
     fun getNotifiedBadgeKeys(): Set<String> {
         val rawValue = config.get(KEY_NOTIFIED_BADGE_KEYS) ?: return emptySet()
@@ -67,6 +87,20 @@ class UserPreferencesManager(private val config: ConfigRepository) {
         config.set(KEY_ENERGY_UNIT, unit)
     }
 
+    fun setBodyMetrics(weight: Double?, height: Double?, age: Int?) {
+        if (weight != null) config.set(KEY_BODY_WEIGHT, weight.toString())
+        if (height != null) config.set(KEY_BODY_HEIGHT, height.toString())
+        if (age != null) config.set(KEY_BODY_AGE, age.toString())
+    }
+
+    fun setBackupFrequency(frequency: String) {
+        config.set(KEY_BACKUP_FREQUENCY, frequency)
+    }
+
+    fun setLastBackupDate(date: String) {
+        config.set(KEY_LAST_BACKUP_DATE, date)
+    }
+
     fun setNotifiedBadgeKeys(keys: Set<String>) {
         config.set(KEY_NOTIFIED_BADGE_KEYS, JSONArray(keys.sorted()).toString())
     }
@@ -82,6 +116,15 @@ class UserPreferencesManager(private val config: ConfigRepository) {
             putString(KEY_WEEK_START, getWeekStart())
             putString(KEY_DISTANCE_UNIT, getDistanceUnit())
             putString(KEY_ENERGY_UNIT, getEnergyUnit())
+            val weight = getBodyWeight()
+            val height = getBodyHeight()
+            val age = getBodyAge()
+            if (weight != null) putDouble(KEY_BODY_WEIGHT, weight) else putNull(KEY_BODY_WEIGHT)
+            if (height != null) putDouble(KEY_BODY_HEIGHT, height) else putNull(KEY_BODY_HEIGHT)
+            if (age != null) putInt(KEY_BODY_AGE, age) else putNull(KEY_BODY_AGE)
+            putString(KEY_BACKUP_FREQUENCY, getBackupFrequency())
+            val lastBackup = getLastBackupDate()
+            if (lastBackup != null) putString(KEY_LAST_BACKUP_DATE, lastBackup) else putNull(KEY_LAST_BACKUP_DATE)
         }
     }
 }

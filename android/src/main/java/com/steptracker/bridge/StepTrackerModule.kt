@@ -1,21 +1,33 @@
 package com.steptracker.bridge
 
 import android.Manifest
+import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.sqlite.SQLiteDatabase
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.facebook.react.bridge.*
+import com.google.android.gms.auth.api.identity.AuthorizationRequest
+import com.google.android.gms.auth.api.identity.Identity
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.Scope
+import com.google.android.gms.tasks.Tasks
+import java.net.URL
+import java.net.URLEncoder
 import com.steptracker.StepSyncWorker
 import com.steptracker.StepTrackerService
+import com.steptracker.services.BackupWorker
 import com.steptracker.data.steps.ConfigRepository
 import com.steptracker.data.steps.JourneyRepository
 import com.steptracker.data.steps.StepHistoryRepository
@@ -25,6 +37,7 @@ import com.steptracker.data.steps.UserPreferencesManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -34,7 +47,7 @@ import java.time.DayOfWeek
 import java.time.temporal.TemporalAdjusters
 
 class StepTrackerModule(private val reactContext: ReactApplicationContext) :
-    ReactContextBaseJavaModule(reactContext) {
+    ReactContextBaseJavaModule(reactContext), ActivityEventListener {
 
     private data class BadgeNotificationPayload(
         val key: String,
@@ -51,7 +64,14 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         private const val KCAL_TO_KJ = 4.184
         private const val BADGE_CHANNEL_ID = "badge_unlocks_channel"
         private const val BADGE_NOTIFICATION_ID_BASE = 9100
+        private const val IMPORT_REQUEST_CODE = 9301
+        private const val GOOGLE_SIGN_IN_REQUEST_CODE = 9302  // Selector de cuenta
+        private const val GOOGLE_AUTH_REQUEST_CODE = 9303     // Consentimiento Drive
     }
+
+    private var importPromise: Promise? = null
+    private var googleSignInPromise: Promise? = null
+    private var pendingAuthEmail: String? = null
 
     private val dbHelper = StepsDatabaseHelper(reactContext)
     private val db = dbHelper.writableDatabase
@@ -65,7 +85,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     init {
         android.util.Log.d("StepTrackerModule", "Module initialized, DB version: ${dbHelper.readableDatabase.version}")
         android.util.Log.d("StepTrackerModule", "Database path: ${reactContext.getDatabasePath("steps.db").absolutePath}")
-        
+        reactContext.addActivityEventListener(this)
         // Ensure journey tables exist
         ensureJourneyTablesExist()
     }
@@ -491,6 +511,16 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod fun setWeekStart(day: String) = prefsManager.setWeekStart(day)
 
     @ReactMethod
+    fun setDailyGoal(goal: Int, promise: Promise) {
+        try {
+            historyRepo.setDailyGoal(goal)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("ERROR_SET_GOAL", e)
+        }
+    }
+
+    @ReactMethod
     fun setDistanceUnit(unit: String) {
         prefsManager.setDistanceUnit(unit)
         refreshForegroundNotification()
@@ -500,6 +530,19 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     fun setEnergyUnit(unit: String) {
         prefsManager.setEnergyUnit(unit)
         refreshForegroundNotification()
+    }
+
+    @ReactMethod
+    fun setBodyMetrics(weight: Double, height: Double, age: Int, promise: Promise) {
+        try {
+            val weightVal = if (weight > 0) weight else null
+            val heightVal = if (height > 0) height else null
+            val ageVal = if (age > 0) age else null
+            prefsManager.setBodyMetrics(weightVal, heightVal, ageVal)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("ERROR_SET_BODY_METRICS", e)
+        }
     }
 
     @ReactMethod
@@ -555,6 +598,521 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             promise.resolve(notifiedCount)
         } catch (e: Exception) {
             promise.reject("BADGE_NOTIFICATION_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun setBackupFrequency(frequency: String, promise: Promise) {
+        try {
+            prefsManager.setBackupFrequency(frequency)
+            scheduleBackupWork(frequency)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("ERROR_BACKUP_FREQ", e)
+        }
+    }
+
+    @ReactMethod
+    fun createBackup(promise: Promise) {
+        try {
+            val json = buildBackupJson()
+            val dateStr = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val fileName = "steptracker_backup_$dateStr.json"
+            val docsDir = reactContext.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)
+                ?: reactContext.filesDir
+            docsDir.mkdirs()
+            val file = File(docsDir, fileName)
+            file.writeText(json)
+
+            val uri = FileProvider.getUriForFile(
+                reactContext,
+                "${reactContext.packageName}.fileprovider",
+                file,
+            )
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            val activity = reactContext.currentActivity
+            if (activity != null) {
+                val isoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).format(Date())
+                prefsManager.setLastBackupDate(isoDate)
+                activity.startActivity(Intent.createChooser(shareIntent, "Guardar copia de seguridad"))
+                promise.resolve(isoDate)
+            } else {
+                promise.reject("NO_ACTIVITY", "No active activity")
+            }
+        } catch (e: Exception) {
+            promise.reject("BACKUP_ERROR", e)
+        }
+    }
+
+    private fun scheduleBackupWork(frequency: String) {
+        val wm = WorkManager.getInstance(reactContext)
+        wm.cancelUniqueWork("step_backup")
+        val (interval, unit) = when (frequency) {
+            "daily" -> 1L to TimeUnit.DAYS
+            "weekly" -> 7L to TimeUnit.DAYS
+            "monthly" -> 30L to TimeUnit.DAYS
+            else -> return
+        }
+        val request = PeriodicWorkRequestBuilder<BackupWorker>(interval, unit)
+            .addTag("step_backup")
+            .build()
+        wm.enqueueUniquePeriodicWork("step_backup", ExistingPeriodicWorkPolicy.REPLACE, request)
+    }
+
+    private fun buildBackupJson(): String {
+        val root = JSONObject()
+        root.put("version", 1)
+        root.put("created_at", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).format(Date()))
+
+        val configArray = JSONArray()
+        val configCursor = db.rawQuery("SELECT key, value FROM config", null)
+        while (configCursor.moveToNext()) {
+            configArray.put(JSONObject().apply {
+                put("key", configCursor.getString(0))
+                put("value", configCursor.getString(1))
+            })
+        }
+        configCursor.close()
+        root.put("config", configArray)
+
+        val dailyArray = JSONArray()
+        val dailyCursor = db.rawQuery("SELECT date, steps, offset, goal FROM daily_history", null)
+        while (dailyCursor.moveToNext()) {
+            dailyArray.put(JSONObject().apply {
+                put("date", dailyCursor.getString(0))
+                put("steps", dailyCursor.getInt(1))
+                put("offset", dailyCursor.getInt(2))
+                put("goal", dailyCursor.getInt(3))
+            })
+        }
+        dailyCursor.close()
+        root.put("daily_history", dailyArray)
+
+        return root.toString(2)
+    }
+
+    @ReactMethod
+    fun signInWithGoogle(promise: Promise) {
+        val activity = reactContext.currentActivity
+        if (activity == null) {
+            promise.reject("NO_ACTIVITY", "No active activity")
+            return
+        }
+        android.util.Log.d("GoogleSignIn", "Starting Google sign-in flow")
+        googleSignInPromise = promise
+
+        // Si hay cuenta guardada, intentar autorizar en silencio primero
+        val prefs = reactContext.getSharedPreferences("steptracker_google", android.content.Context.MODE_PRIVATE)
+        val savedEmail = prefs.getString("email", null)
+        if (savedEmail != null) {
+            val authRequest = AuthorizationRequest.Builder()
+                .setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive.appdata")))
+                .setAccount(android.accounts.Account(savedEmail, "com.google"))
+                .build()
+            Identity.getAuthorizationClient(activity)
+                .authorize(authRequest)
+                .addOnSuccessListener { authResult ->
+                    if (!authResult.hasResolution()) {
+                        googleSignInPromise = null
+                        android.util.Log.d("GoogleSignIn", "Silent auth OK: $savedEmail")
+                        val displayName = prefs.getString("displayName", savedEmail) ?: savedEmail
+                        val map = Arguments.createMap().apply {
+                            putString("email", savedEmail)
+                            putString("displayName", displayName)
+                        }
+                        promise.resolve(map)
+                    } else {
+                        showAccountPicker(activity)
+                    }
+                }
+                .addOnFailureListener { showAccountPicker(activity) }
+        } else {
+            showAccountPicker(activity)
+        }
+    }
+
+    private fun showAccountPicker(activity: android.app.Activity) {
+        val intent = android.accounts.AccountManager.newChooseAccountIntent(
+            null, null, arrayOf("com.google"), null, null, null, null
+        )
+        activity.startActivityForResult(intent, GOOGLE_SIGN_IN_REQUEST_CODE)
+    }
+
+    @ReactMethod
+    fun getGoogleSignInAccount(promise: Promise) {
+        try {
+            val prefs = reactContext.getSharedPreferences("steptracker_google", android.content.Context.MODE_PRIVATE)
+            val email = prefs.getString("email", null)
+            if (email != null) {
+                val displayName = prefs.getString("displayName", email) ?: email
+                val map = Arguments.createMap().apply {
+                    putString("email", email)
+                    putString("displayName", displayName)
+                }
+                promise.resolve(map)
+            } else {
+                promise.resolve(null)
+            }
+        } catch (e: Exception) {
+            promise.reject("ERROR_GOOGLE_ACCOUNT", e.message ?: "Unknown error")
+        }
+    }
+
+    @ReactMethod
+    fun signOutGoogle(promise: Promise) {
+        reactContext.getSharedPreferences("steptracker_google", android.content.Context.MODE_PRIVATE)
+            .edit().clear().apply()
+        promise.resolve(null)
+    }
+
+    private fun saveGoogleAccount(email: String, displayName: String) {
+        reactContext.getSharedPreferences("steptracker_google", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putString("email", email)
+            .putString("displayName", displayName)
+            .apply()
+    }
+
+    private fun getAuthToken(): String {
+        val activity = reactContext.currentActivity ?: throw Exception("NO_ACTIVITY")
+        val prefs = reactContext.getSharedPreferences("steptracker_google", android.content.Context.MODE_PRIVATE)
+        val email = prefs.getString("email", null) ?: throw Exception("NO_ACCOUNT")
+        val authRequest = AuthorizationRequest.Builder()
+            .setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive.appdata")))
+            .setAccount(android.accounts.Account(email, "com.google"))
+            .build()
+        val authResult = Tasks.await(Identity.getAuthorizationClient(activity).authorize(authRequest))
+        if (authResult.hasResolution()) throw Exception("NEEDS_SIGN_IN")
+        return authResult.accessToken ?: throw Exception("NO_TOKEN")
+    }
+
+    @ReactMethod
+    fun backupToDrive(promise: Promise) {
+        Thread {
+            try {
+                val token = getAuthToken()
+
+                val json = buildBackupJson()
+                val fileName = "stepjourney_backup.json"
+
+                // Buscar archivo existente en appDataFolder
+                val encodedQuery = URLEncoder.encode("name='$fileName'", "UTF-8")
+                val listConn = URL(
+                    "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=$encodedQuery&fields=files(id)"
+                ).openConnection() as java.net.HttpURLConnection
+                listConn.setRequestProperty("Authorization", "Bearer $token")
+                val listCode = listConn.responseCode
+                val listText = if (listCode in 200..299)
+                    listConn.inputStream.bufferedReader().readText()
+                else {
+                    val errBody = listConn.errorStream?.bufferedReader()?.readText() ?: ""
+                    listConn.disconnect()
+                    throw Exception("LIST_ERROR ($listCode): $errBody")
+                }
+                listConn.disconnect()
+
+                val existingId = JSONObject(listText)
+                    .optJSONArray("files")
+                    ?.takeIf { it.length() > 0 }
+                    ?.getJSONObject(0)
+                    ?.getString("id")
+
+                android.util.Log.d("GoogleDrive", "Existing file ID: $existingId")
+
+                // Subir o actualizar con multipart
+                val boundary = "drive_boundary_${System.currentTimeMillis()}"
+                val metadataJson = if (existingId == null)
+                    """{"name":"$fileName","parents":["appDataFolder"]}"""
+                else
+                    "{}"
+
+                val uploadUrl = if (existingId != null)
+                    URL("https://www.googleapis.com/upload/drive/v3/files/$existingId?uploadType=multipart")
+                else
+                    URL("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
+
+                val uploadConn = uploadUrl.openConnection() as java.net.HttpURLConnection
+                uploadConn.requestMethod = if (existingId != null) "PATCH" else "POST"
+                uploadConn.setRequestProperty("Authorization", "Bearer $token")
+                uploadConn.setRequestProperty("Content-Type", "multipart/related; boundary=$boundary")
+                uploadConn.doOutput = true
+
+                val body = "--$boundary\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n$metadataJson\r\n--$boundary\r\nContent-Type: application/json\r\n\r\n$json\r\n--$boundary--\r\n"
+                uploadConn.outputStream.write(body.toByteArray(Charsets.UTF_8))
+
+                val responseCode = uploadConn.responseCode
+                val responseBody = if (responseCode in 200..299)
+                    uploadConn.inputStream.bufferedReader().readText()
+                else
+                    uploadConn.errorStream?.bufferedReader()?.readText() ?: ""
+                uploadConn.disconnect()
+
+                android.util.Log.d("GoogleDrive", "Upload response $responseCode: $responseBody")
+
+                if (responseCode == 401) {
+                    android.util.Log.w("GoogleDrive", "401 received, session expired")
+                    promise.reject("DRIVE_ERROR", "Session expired, please sign in again")
+                } else if (responseCode == 403 && responseBody.contains("storageQuotaExceeded")) {
+                    android.util.Log.w("GoogleDrive", "Storage quota exceeded")
+                    promise.reject("QUOTA_ERROR", "storageQuotaExceeded")
+                } else if (responseCode in 200..299) {
+                    val isoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).format(Date())
+                    prefsManager.setLastBackupDate(isoDate)
+                    promise.resolve(isoDate)
+                } else {
+                    promise.reject("DRIVE_ERROR", "Upload failed ($responseCode): $responseBody")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("GoogleDrive", "backupToDrive failed", e)
+                promise.reject("DRIVE_ERROR", e.message ?: "Unknown error")
+            }
+        }.start()
+    }
+
+    @ReactMethod
+    fun checkDriveBackup(promise: Promise) {
+        Thread {
+            try {
+                val token = try {
+                    getAuthToken()
+                } catch (e: Exception) {
+                    promise.resolve(false); return@Thread
+                }
+                val encodedQuery = URLEncoder.encode("name='stepjourney_backup.json'", "UTF-8")
+                val listConn = URL(
+                    "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=$encodedQuery&fields=files(id)"
+                ).openConnection() as java.net.HttpURLConnection
+                listConn.setRequestProperty("Authorization", "Bearer $token")
+                val listCode = listConn.responseCode
+                val listText = if (listCode in 200..299) listConn.inputStream.bufferedReader().readText() else ""
+                listConn.disconnect()
+                val filesArray = JSONObject(listText).optJSONArray("files")
+                promise.resolve(filesArray != null && filesArray.length() > 0)
+            } catch (e: Exception) {
+                android.util.Log.w("GoogleDrive", "checkDriveBackup: ${e.message}")
+                promise.resolve(false)
+            }
+        }.start()
+    }
+
+    @ReactMethod
+    fun restoreFromDrive(promise: Promise) {
+        Thread {
+            try {
+                val token = getAuthToken()
+                val encodedQuery = URLEncoder.encode("name='stepjourney_backup.json'", "UTF-8")
+                val listConn = URL(
+                    "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=$encodedQuery&fields=files(id)"
+                ).openConnection() as java.net.HttpURLConnection
+                listConn.setRequestProperty("Authorization", "Bearer $token")
+                val listCode = listConn.responseCode
+                val listText = if (listCode in 200..299)
+                    listConn.inputStream.bufferedReader().readText()
+                else {
+                    val err = listConn.errorStream?.bufferedReader()?.readText() ?: ""
+                    listConn.disconnect()
+                    throw Exception("LIST_ERROR ($listCode): $err")
+                }
+                listConn.disconnect()
+                val fileId = JSONObject(listText)
+                    .optJSONArray("files")
+                    ?.takeIf { it.length() > 0 }
+                    ?.getJSONObject(0)
+                    ?.getString("id")
+                    ?: throw Exception("NO_BACKUP")
+                val dlConn = URL("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
+                    .openConnection() as java.net.HttpURLConnection
+                dlConn.setRequestProperty("Authorization", "Bearer $token")
+                val dlCode = dlConn.responseCode
+                val content = if (dlCode in 200..299)
+                    dlConn.inputStream.bufferedReader().readText()
+                else {
+                    val err = dlConn.errorStream?.bufferedReader()?.readText() ?: ""
+                    dlConn.disconnect()
+                    throw Exception("DOWNLOAD_ERROR ($dlCode): $err")
+                }
+                dlConn.disconnect()
+                restoreFromJson(content)
+                promise.resolve(null)
+            } catch (e: Exception) {
+                android.util.Log.e("GoogleDrive", "restoreFromDrive failed", e)
+                promise.reject("RESTORE_ERROR", e.message ?: "Unknown error")
+            }
+        }.start()
+    }
+
+    @ReactMethod
+    fun importBackup(promise: Promise) {
+        val activity = reactContext.currentActivity
+        if (activity == null) {
+            promise.reject("NO_ACTIVITY", "No active activity")
+            return
+        }
+        importPromise = promise
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
+        }
+        activity.startActivityForResult(intent, IMPORT_REQUEST_CODE)
+    }
+
+    override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
+        when (requestCode) {
+            IMPORT_REQUEST_CODE -> {
+                val promise = importPromise ?: return
+                importPromise = null
+
+                if (resultCode != Activity.RESULT_OK || data?.data == null) {
+                    promise.reject("CANCELLED", "User cancelled file selection")
+                    return
+                }
+
+                try {
+                    val uri = data.data!!
+                    val content = reactContext.contentResolver.openInputStream(uri)
+                        ?.bufferedReader()
+                        ?.readText()
+                        ?: throw Exception("Could not read file")
+                    restoreFromJson(content)
+                    promise.resolve(null)
+                } catch (e: Exception) {
+                    promise.reject("IMPORT_ERROR", e.message ?: "Unknown error")
+                }
+            }
+            GOOGLE_SIGN_IN_REQUEST_CODE -> {
+                // Resultado del selector de cuenta (AccountManager)
+                android.util.Log.d("GoogleSignIn", "Account picker result: resultCode=$resultCode")
+                val promise = googleSignInPromise ?: run {
+                    android.util.Log.w("GoogleSignIn", "Promise was null, ignoring result")
+                    return
+                }
+
+                if (resultCode != Activity.RESULT_OK) {
+                    googleSignInPromise = null
+                    promise.reject("CANCELLED", "User cancelled sign-in")
+                    return
+                }
+
+                val email = data?.getStringExtra(android.accounts.AccountManager.KEY_ACCOUNT_NAME) ?: run {
+                    googleSignInPromise = null
+                    promise.reject("SIGN_IN_ERROR", "Could not get account name")
+                    return
+                }
+
+                pendingAuthEmail = email
+                val authRequest = AuthorizationRequest.Builder()
+                    .setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive.appdata")))
+                    .setAccount(android.accounts.Account(email, "com.google"))
+                    .build()
+                Identity.getAuthorizationClient(activity)
+                    .authorize(authRequest)
+                    .addOnSuccessListener { authResult ->
+                        if (authResult.hasResolution()) {
+                            try {
+                                activity.startIntentSenderForResult(
+                                    authResult.pendingIntent!!.intentSender,
+                                    GOOGLE_AUTH_REQUEST_CODE, null, 0, 0, 0
+                                )
+                            } catch (e: Exception) {
+                                googleSignInPromise = null
+                                pendingAuthEmail = null
+                                promise.reject("SIGN_IN_ERROR", e.message ?: "Failed to start authorization")
+                            }
+                        } else {
+                            googleSignInPromise = null
+                            pendingAuthEmail = null
+                            saveGoogleAccount(email, email)
+                            android.util.Log.d("GoogleSignIn", "Authorization OK (no consent needed): $email")
+                            val map = Arguments.createMap().apply {
+                                putString("email", email)
+                                putString("displayName", email)
+                            }
+                            promise.resolve(map)
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        googleSignInPromise = null
+                        pendingAuthEmail = null
+                        promise.reject("SIGN_IN_ERROR", e.message ?: "Authorization failed")
+                    }
+            }
+            GOOGLE_AUTH_REQUEST_CODE -> {
+                // Resultado del consentimiento de Drive
+                android.util.Log.d("GoogleSignIn", "Drive auth result: resultCode=$resultCode")
+                val promise = googleSignInPromise ?: run {
+                    android.util.Log.w("GoogleSignIn", "Promise was null, ignoring result")
+                    return
+                }
+                googleSignInPromise = null
+                val email = pendingAuthEmail ?: ""
+                pendingAuthEmail = null
+
+                try {
+                    Identity.getAuthorizationClient(activity)
+                        .getAuthorizationResultFromIntent(data)
+                    saveGoogleAccount(email, email)
+                    android.util.Log.d("GoogleSignIn", "Drive authorization OK: $email")
+                    val map = Arguments.createMap().apply {
+                        putString("email", email)
+                        putString("displayName", email)
+                    }
+                    promise.resolve(map)
+                } catch (e: ApiException) {
+                    android.util.Log.w("GoogleSignIn", "ApiException statusCode=${e.statusCode}")
+                    if (e.statusCode == 16) {
+                        promise.reject("CANCELLED", "User cancelled authorization")
+                    } else {
+                        promise.reject("SIGN_IN_ERROR", "Authorization failed with code ${e.statusCode}")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("GoogleSignIn", "Exception in Drive auth result", e)
+                    promise.reject("SIGN_IN_ERROR", e.message ?: "Unknown error")
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent?) {}
+
+    private fun restoreFromJson(json: String) {
+        val root = JSONObject(json)
+
+        val configArray = root.optJSONArray("config")
+        if (configArray != null) {
+            for (i in 0 until configArray.length()) {
+                val item = configArray.getJSONObject(i)
+                configRepo.set(item.getString("key"), item.getString("value"))
+            }
+        }
+
+        val dailyArray = root.optJSONArray("daily_history")
+        if (dailyArray != null) {
+            db.beginTransaction()
+            try {
+                for (i in 0 until dailyArray.length()) {
+                    val item = dailyArray.getJSONObject(i)
+                    val values = ContentValues().apply {
+                        put("date", item.getString("date"))
+                        put("steps", item.getInt("steps"))
+                        put("offset", item.optInt("offset", 0))
+                        put("goal", item.optInt("goal", 10000))
+                    }
+                    db.insertWithOnConflict(
+                        "daily_history", null, values,
+                        SQLiteDatabase.CONFLICT_REPLACE,
+                    )
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         }
     }
 
