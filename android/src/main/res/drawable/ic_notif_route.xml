@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Route icon: two waypoints connected, similar to swap_calls -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp"
+    android:height="16dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M18,7l-4,-4l-1.41,1.41L14.17,6H7C5.9,6 5,6.9 5,8v4h2V8h7.17l-1.58,1.59L14,11l4,-4z" />
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M6,13l-4,4l4,4v-3h7c1.1,0 2,-0.9 2,-2v-4h-2v4H6V13z" />
+</vector>

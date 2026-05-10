@@ -41,10 +41,13 @@ class StepTrackerService : Service(), SensorEventListener {
 
         private data class DailyNotificationStats(
             val language: String,
-            val progressText: String,
+            val stepsText: String,
             val progressValue: Int,
-            val statsText: String,
-            val journeyText: String? = null,
+            val energyText: String,
+            val distanceText: String,
+            val journeyRouteText: String? = null,
+            val journeyPercentText: String? = null,
+            val journeyDistanceText: String? = null,
         )
 
         fun updateNotificationExternally(ctx: Context, steps: Int) {
@@ -55,13 +58,16 @@ class StepTrackerService : Service(), SensorEventListener {
         private fun buildBaseNotification(ctx: Context, steps: Int): Notification {
             val stats = loadDailyNotificationStats(ctx, steps)
             val contentView = RemoteViews(ctx.packageName, R.layout.steps_tracking_notification).apply {
-                setTextViewText(R.id.steps_notification_progress_text, stats.progressText)
+                setTextViewText(R.id.notif_steps_text, stats.stepsText)
                 setProgressBar(R.id.steps_notification_progress_bar, 1000, stats.progressValue, false)
-                setTextViewText(R.id.steps_notification_stats_text, stats.statsText)
-                val journeyVisible = stats.journeyText != null
+                setTextViewText(R.id.notif_energy_text, stats.energyText)
+                setTextViewText(R.id.notif_distance_text, stats.distanceText)
+                val journeyVisible = stats.journeyRouteText != null
                 setViewVisibility(R.id.steps_notification_journey_section, if (journeyVisible) 0 else 8)
                 if (journeyVisible) {
-                    setTextViewText(R.id.steps_notification_journey_text, stats.journeyText)
+                    setTextViewText(R.id.notif_journey_route, stats.journeyRouteText)
+                    setTextViewText(R.id.notif_journey_percent, stats.journeyPercentText ?: "")
+                    setTextViewText(R.id.notif_journey_distance, stats.journeyDistanceText ?: "")
                 }
             }
             val launchIntent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)?.apply {
@@ -79,7 +85,7 @@ class StepTrackerService : Service(), SensorEventListener {
             return NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notif_steps)
                 .setContentTitle(dailyNotificationTitle(stats.language))
-                .setContentText(stats.progressText)
+                .setContentText(stats.stepsText)
                 .setStyle(NotificationCompat.DecoratedCustomViewStyle())
                 .setCustomContentView(contentView)
                 .setCustomBigContentView(contentView)
@@ -113,11 +119,12 @@ class StepTrackerService : Service(), SensorEventListener {
                 val energyValue = if (energyPref == "kj") energyKcal * KCAL_TO_KJ else energyKcal
                 val energyUnit = if (energyPref == "kj") "kJ" else "kcal"
                 val progress = if (goal > 0) minOf(((steps.toDouble() / goal) * 1000.0).roundToInt(), 1000) else 0
-                val statsText = "\u26A1 ${formatWholeNumber(energyValue, language)} $energyUnit" +
-                    "  \u00B7  " +
-                    "\u2191 ${formatOneDecimal(distanceValue, language)} $distanceUnit"
+                val energyText = "${formatWholeNumber(energyValue, language)} $energyUnit"
+                val distanceText = "${formatOneDecimal(distanceValue, language)} $distanceUnit"
 
-                var journeyText: String? = null
+                var journeyRouteText: String? = null
+                var journeyPercentText: String? = null
+                var journeyDistanceText: String? = null
                 try {
                     val jCursor = db.rawQuery(
                         """
@@ -152,10 +159,13 @@ class StepTrackerService : Service(), SensorEventListener {
                             ?: if (language.startsWith("es")) "Origen" else "Origin"
                         val dest = jCursor.getString(1)?.takeIf { it.isNotBlank() }
                             ?: if (language.startsWith("es")) "destino" else "destination"
-                        val routeText = "$origin \u2192 $dest"
-                        journeyText = "$routeText · ${jProgress}% · ${formatOneDecimal(jWalkedValue, language)}/${formatOneDecimal(jTotalValue, language)} $distanceUnit"
+                        journeyRouteText = "$origin \u2192 $dest"
                         if (jRemainingKm <= 0.0) {
-                            journeyText = if (language.startsWith("es")) "$routeText · completado" else "$routeText · completed"
+                            journeyPercentText = "100%"
+                            journeyDistanceText = if (language.startsWith("es")) "completado" else "completed"
+                        } else {
+                            journeyPercentText = "${jProgress}%"
+                            journeyDistanceText = "${formatOneDecimal(jWalkedValue, language)} / ${formatOneDecimal(jTotalValue, language)} $distanceUnit"
                         }
                     }
                     jCursor.close()
@@ -163,21 +173,24 @@ class StepTrackerService : Service(), SensorEventListener {
 
                 DailyNotificationStats(
                     language = language,
-                    progressText = buildProgressText(steps, goal, language),
+                    stepsText = buildStepsText(steps, language),
                     progressValue = progress,
-                    statsText = statsText,
-                    journeyText = journeyText,
+                    energyText = energyText,
+                    distanceText = distanceText,
+                    journeyRouteText = journeyRouteText,
+                    journeyPercentText = journeyPercentText,
+                    journeyDistanceText = journeyDistanceText,
                 )
             } finally {
                 dbHelper.close()
             }
         }
 
-        private fun buildProgressText(steps: Int, goal: Int, language: String): String {
+        private fun buildStepsText(steps: Int, language: String): String {
             val unit = if (language.startsWith("es")) "pasos" else "steps"
             val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
             val formatted = java.text.NumberFormat.getNumberInstance(locale).format(steps)
-            return "\uD83D\uDC63 $formatted $unit"
+            return "$formatted $unit"
         }
 
         private fun dailyNotificationTitle(language: String): String =
