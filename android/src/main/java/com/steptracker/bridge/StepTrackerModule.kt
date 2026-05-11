@@ -511,6 +511,11 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod fun setWeekStart(day: String) = prefsManager.setWeekStart(day)
 
     @ReactMethod
+    fun setTutorialSeen(seen: Boolean) {
+        prefsManager.setTutorialSeen(seen)
+    }
+
+    @ReactMethod
     fun setDailyGoal(goal: Int, promise: Promise) {
         try {
             historyRepo.setDailyGoal(goal)
