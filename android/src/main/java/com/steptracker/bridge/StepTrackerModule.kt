@@ -28,6 +28,7 @@ import java.net.URLEncoder
 import com.steptracker.StepSyncWorker
 import com.steptracker.StepTrackerService
 import com.steptracker.services.BackupWorker
+import com.steptracker.services.DriveBackupWorker
 import com.steptracker.data.steps.ConfigRepository
 import com.steptracker.data.steps.JourneyRepository
 import com.steptracker.data.steps.StepHistoryRepository
@@ -86,8 +87,27 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         android.util.Log.d("StepTrackerModule", "Module initialized, DB version: ${dbHelper.readableDatabase.version}")
         android.util.Log.d("StepTrackerModule", "Database path: ${reactContext.getDatabasePath("steps.db").absolutePath}")
         reactContext.addActivityEventListener(this)
-        // Ensure journey tables exist
         ensureJourneyTablesExist()
+
+        // Re-programar backup Drive si estaba activado (sobrevive a reinicios)
+        if (prefsManager.isDriveAutoBackupEnabled()) {
+            val freq = prefsManager.getDriveBackupFrequency()
+            val (interval, unit) = when (freq) {
+                "weekly"  -> 7L   to TimeUnit.DAYS
+                "monthly" -> 30L  to TimeUnit.DAYS
+                "yearly"  -> 365L to TimeUnit.DAYS
+                else      -> 1L   to TimeUnit.DAYS
+            }
+            val wm = WorkManager.getInstance(reactContext)
+            val request = androidx.work.PeriodicWorkRequestBuilder<DriveBackupWorker>(interval, unit)
+                .addTag(DriveBackupWorker.WORK_NAME)
+                .build()
+            wm.enqueueUniquePeriodicWork(
+                DriveBackupWorker.WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                request
+            )
+        }
     }
     
     private fun ensureJourneyTablesExist() {
@@ -513,6 +533,32 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun setTutorialSeen(seen: Boolean) {
         prefsManager.setTutorialSeen(seen)
+    }
+
+    @ReactMethod
+    fun setDriveBackupFrequency(frequency: String) {
+        prefsManager.setDriveBackupFrequency(frequency)
+        val wm = WorkManager.getInstance(reactContext)
+        if (frequency == "off") {
+            wm.cancelUniqueWork(DriveBackupWorker.WORK_NAME)
+            android.util.Log.d("StepTrackerModule", "Drive auto backup cancelled")
+        } else {
+            val (interval, unit) = when (frequency) {
+                "weekly"  -> 7L   to TimeUnit.DAYS
+                "monthly" -> 30L  to TimeUnit.DAYS
+                "yearly"  -> 365L to TimeUnit.DAYS
+                else      -> 1L   to TimeUnit.DAYS   // "daily" por defecto
+            }
+            val request = androidx.work.PeriodicWorkRequestBuilder<DriveBackupWorker>(interval, unit)
+                .addTag(DriveBackupWorker.WORK_NAME)
+                .build()
+            wm.enqueueUniquePeriodicWork(
+                DriveBackupWorker.WORK_NAME,
+                ExistingPeriodicWorkPolicy.REPLACE,
+                request
+            )
+            android.util.Log.d("StepTrackerModule", "Drive auto backup scheduled: $frequency")
+        }
     }
 
     @ReactMethod

@@ -18,6 +18,7 @@ class UserPreferencesManager(private val config: ConfigRepository) {
     private val KEY_BACKUP_FREQUENCY = "backup_frequency"
     private val KEY_LAST_BACKUP_DATE = "last_backup_date"
     private val KEY_TUTORIAL_SEEN = "tutorial_seen"
+    private val KEY_DRIVE_BACKUP_FREQUENCY = "drive_backup_frequency"
 
     fun getLanguage(): String =
         config.get(KEY_LANGUAGE) ?: "en"
@@ -117,6 +118,16 @@ class UserPreferencesManager(private val config: ConfigRepository) {
         config.set(KEY_TUTORIAL_SEEN, if (seen) "1" else "0")
     }
 
+    fun getDriveBackupFrequency(): String =
+        config.get(KEY_DRIVE_BACKUP_FREQUENCY) ?: "off"
+
+    fun setDriveBackupFrequency(frequency: String) {
+        config.set(KEY_DRIVE_BACKUP_FREQUENCY, frequency)
+    }
+
+    fun isDriveAutoBackupEnabled(): Boolean =
+        getDriveBackupFrequency() != "off"
+
 
     fun getUserPreferences(): WritableMap {
         return Arguments.createMap().apply {
@@ -134,6 +145,7 @@ class UserPreferencesManager(private val config: ConfigRepository) {
             val lastBackup = getLastBackupDate()
             if (lastBackup != null) putString(KEY_LAST_BACKUP_DATE, lastBackup) else putNull(KEY_LAST_BACKUP_DATE)
             putBoolean(KEY_TUTORIAL_SEEN, isTutorialSeen())
+            putString(KEY_DRIVE_BACKUP_FREQUENCY, getDriveBackupFrequency())
         }
     }
 }
