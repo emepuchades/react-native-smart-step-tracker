@@ -40,27 +40,21 @@ class JourneyRepository(private val db: SQLiteDatabase) {
         )
     }
 
+    private val locale get() = Locale(configRepo.get("language") ?: "en", "")
+
     private fun computeWeekStartShift(date: LocalDate): Int {
         return when ((configRepo.get("week_start") ?: "monday").lowercase(Locale.getDefault())) {
             "sunday" -> date.dayOfWeek.value % 7
+            "saturday" -> (date.dayOfWeek.value + 1) % 7
             else -> date.dayOfWeek.value - 1
         }
     }
 
-    private fun dayShort(date: LocalDate): String {
-        return when (date.dayOfWeek.value) {
-            1 -> "L"
-            2 -> "M"
-            3 -> "X"
-            4 -> "J"
-            5 -> "V"
-            6 -> "S"
-            else -> "D"
-        }
-    }
+    private fun dayShort(date: LocalDate): String =
+        date.dayOfWeek.getDisplayName(TextStyle.NARROW, locale)
 
     private fun dayFull(date: LocalDate): String {
-        return date.dayOfWeek.getDisplayName(TextStyle.FULL, Locale("es", "ES"))
+        return date.dayOfWeek.getDisplayName(TextStyle.FULL, locale)
     }
 
     private fun getCountedStepsForRange(journeyId: String, start: LocalDate, end: LocalDate): Int {
