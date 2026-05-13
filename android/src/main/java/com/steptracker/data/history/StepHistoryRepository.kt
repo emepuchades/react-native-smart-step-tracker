@@ -34,9 +34,10 @@ class StepHistoryRepository(
     }
 
     fun setStepsForDate(date: String, steps: Int) {
+        val safeSteps = maxOf(steps, 0)
         val offset = getTodayOffset(date)
         val goal = getDailyGoal()
-        insertOrUpdateDaily(date, steps, offset, goal)
+        insertOrUpdateDaily(date, safeSteps, offset, goal)
     }
 
     fun getTodayOffset(date: String): Int {

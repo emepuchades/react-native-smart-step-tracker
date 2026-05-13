@@ -30,6 +30,9 @@ class StepTrackerService : Service(), SensorEventListener {
         const val JOURNEY_CHANNEL_ID = "journey_updates"
         const val JOURNEY_NOTIF_ID = 2
 
+        const val DAILY_GOAL_CHANNEL_ID = "daily_goal_channel"
+        const val DAILY_GOAL_NOTIF_ID = 3
+
         const val ACTION_STEPS_UPDATE = "com.steptracker.STEPS_UPDATE"
         const val EXTRA_STEPS = "steps_today"
 
@@ -253,25 +256,32 @@ class StepTrackerService : Service(), SensorEventListener {
 
     private var lastCounter = -1f
     private var todayOffsetCounter: Int = -1
+    private var todayBaseSteps: Int = 0
     private var detectorStepsToday: Int = 0
     private var usingStepCounter = false
     private var usingStepDetector = false
+    private var dailyGoalNotifiedDate: String = ""
 
     override fun onCreate() {
         super.onCreate()
 
         createNotificationChannel()
-        startForeground(NOTIF_ID, buildBaseNotification(this, 0))
 
+        // Cargar estado antes de mostrar la notificación
         lastCounter = configRepo.get("last_counter")?.toFloatOrNull() ?: -1f
         todayOffsetCounter = historyRepo.getTodayOffset(todayStr())
+        todayBaseSteps = configRepo.get("today_base_steps")?.toIntOrNull() ?: 0
+        // Inicializar desde BD para que el detector no empiece desde 0 tras reboot/reinicio
+        val stepsFromDb = safeSteps(historyRepo.getStepsForDate(todayStr()))
+        detectorStepsToday = stepsFromDb
+
+        // Mostrar pasos reales desde el primer momento (no 0)
+        startForeground(NOTIF_ID, buildBaseNotification(this, stepsFromDb))
 
         if (!registerAvailableSensor()) {
             stopSelf()
             return
         }
-
-        updateNotificationFromDb()
     }
 
     override fun onDestroy() {
@@ -310,16 +320,19 @@ class StepTrackerService : Service(), SensorEventListener {
             val recoveredSteps = initOrFixOffset(counter, nowMs)
             persistState(counter, nowMs, today)
             syncActiveJourneyProgress(recoveredSteps, today, hourStr(nowMs).toInt())
-            broadcastAndNotify((counter - todayOffsetCounter).toInt())
+            val stepsToday = todayBaseSteps + maxOf((counter - todayOffsetCounter).toInt(), 0)
+            broadcastAndNotify(stepsToday)
             lastCounter = counter
             return
         }
 
+        // counter < lastCounter: el sensor se ha reiniciado (reboot del móvil)
         if (counter < lastCounter) {
             val recoveredSteps = initOrFixOffset(counter, nowMs)
             persistState(counter, nowMs, today)
             syncActiveJourneyProgress(recoveredSteps, today, hourStr(nowMs).toInt())
-            broadcastAndNotify(0)
+            // Mostrar los pasos previos al reinicio que ya estaban guardados
+            broadcastAndNotify(todayBaseSteps)
             lastCounter = counter
             return
         }
@@ -338,12 +351,14 @@ class StepTrackerService : Service(), SensorEventListener {
 
         saveHourly(today, hourStr(nowMs), delta)
 
-        val stepsToday = (counter - todayOffsetCounter)
-        historyRepo.setStepsForDate(today, stepsToday.toInt())
+        val stepsToday = todayBaseSteps + maxOf((counter - todayOffsetCounter).toInt(), 0)
+        val previousStepsCounter = stepsToday - delta.toInt()
+        historyRepo.setStepsForDate(today, stepsToday)
         syncActiveJourneyProgress(delta.toInt(), today, hourStr(nowMs).toInt())
+        checkAndNotifyDailyGoal(previousStepsCounter, stepsToday, today)
         configRepo.set("last_counter", counter.toString())
 
-        broadcastAndNotify(stepsToday.toInt())
+        broadcastAndNotify(stepsToday)
         lastCounter = counter
     }
 
@@ -357,10 +372,12 @@ class StepTrackerService : Service(), SensorEventListener {
             configRepo.set("prev_date", today)
         }
 
+        val previousStepsDetector = detectorStepsToday
         detectorStepsToday += deltaSteps
         saveHourly(today, hourStr(nowMs), deltaSteps.toFloat())
         historyRepo.setStepsForDate(today, detectorStepsToday)
         syncActiveJourneyProgress(deltaSteps, today, hourStr(nowMs).toInt())
+        checkAndNotifyDailyGoal(previousStepsDetector, detectorStepsToday, today)
         configRepo.set("last_counter", detectorStepsToday.toString())
         configRepo.set("last_counter_time", nowMs.toString())
 
@@ -381,11 +398,23 @@ class StepTrackerService : Service(), SensorEventListener {
         usingStepCounter = false
         usingStepDetector = false
 
+        if (allowStepCounter != false && stepSensor != null) {
+            sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_UI)
+            usingStepCounter = true
+            return true
+        }
+        if (allowStepDetector != false && stepDetector != null) {
+            sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL)
+            usingStepDetector = true
+            return true
+        }
+        // Fallback: usar cualquier sensor disponible si ambas flags bloquean
         if (stepSensor != null) {
             sensorManager.registerListener(this, stepSensor, SensorManager.SENSOR_DELAY_UI)
             usingStepCounter = true
             return true
-        } else if (stepDetector != null) {
+        }
+        if (stepDetector != null) {
             sensorManager.registerListener(this, stepDetector, SensorManager.SENSOR_DELAY_NORMAL)
             usingStepDetector = true
             return true
@@ -400,18 +429,38 @@ class StepTrackerService : Service(), SensorEventListener {
         val saved = historyRepo.getTodayOffset(today)
         var recoveredSteps = 0
 
-        if (saved < 0) {
-            historyRepo.setTodayOffset(today, counter.toInt())
-            todayOffsetCounter = counter.toInt()
-        } else {
-            if (counter > saved) {
-                val missed = (counter - saved)
-                val prev = historyRepo.getStepsForDate(today)
-                historyRepo.setStepsForDate(today, (prev + missed).toInt())
+        when {
+            saved < 0 -> {
+                // Primera vez para esta fecha: inicializar offset desde cero
+                todayBaseSteps = 0
+                configRepo.set("today_base_steps", "0")
                 historyRepo.setTodayOffset(today, counter.toInt())
-                recoveredSteps = missed.toInt()
+                todayOffsetCounter = counter.toInt()
             }
-            todayOffsetCounter = historyRepo.getTodayOffset(today)
+            counter < saved -> {
+                // REBOOT: el sensor hardware se reinició por debajo del offset guardado.
+                // Guardar los pasos ya acumulados en BD como base para no perderlos.
+                todayBaseSteps = maxOf(historyRepo.getStepsForDate(today), 0)
+                configRepo.set("today_base_steps", todayBaseSteps.toString())
+                historyRepo.setTodayOffset(today, counter.toInt())
+                todayOffsetCounter = counter.toInt()
+            }
+            counter > saved -> {
+                // Reinicio del servicio sin reboot: el contador es mayor que el offset guardado.
+                // Recuperar los pasos perdidos durante el tiempo en que el servicio no corría.
+                val missed = (counter - saved).toInt()
+                val prev = maxOf(historyRepo.getStepsForDate(today), 0)
+                historyRepo.setStepsForDate(today, prev + missed)
+                historyRepo.setTodayOffset(today, counter.toInt())
+                todayOffsetCounter = counter.toInt()
+                todayBaseSteps = configRepo.get("today_base_steps")?.toIntOrNull() ?: 0
+                recoveredSteps = missed
+            }
+            else -> {
+                // counter == saved: restaurar estado sin cambios
+                todayOffsetCounter = saved
+                todayBaseSteps = configRepo.get("today_base_steps")?.toIntOrNull() ?: 0
+            }
         }
 
         return recoveredSteps
@@ -516,6 +565,95 @@ class StepTrackerService : Service(), SensorEventListener {
             .build()
     }
 
+    private fun checkAndNotifyDailyGoal(previousSteps: Int, newSteps: Int, date: String) {
+        if (dailyGoalNotifiedDate == date) return
+        val goal = historyRepo.getDailyGoal()
+        if (goal <= 0) return
+        if (previousSteps >= goal) return
+        if (newSteps < goal) return
+
+        dailyGoalNotifiedDate = date
+        val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notification = try {
+            buildDailyGoalNotification(newSteps)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            buildDailyGoalFallbackNotification(newSteps)
+        }
+        mgr.notify(DAILY_GOAL_NOTIF_ID, notification)
+    }
+
+    private fun buildDailyGoalNotification(steps: Int): Notification {
+        val language = preferencesManager.getLanguage().lowercase(Locale.ROOT)
+        val distanceUnit = preferencesManager.getDistanceUnit().lowercase(Locale.ROOT)
+        val energyUnit = preferencesManager.getEnergyUnit().lowercase(Locale.ROOT)
+        val badgeText = if (language.startsWith("es")) "¡Objetivo diario!" else "Daily goal!"
+        val distanceKm = steps * KM_PER_STEP
+        val isMiles = distanceUnit == "miles" || distanceUnit == "mi"
+        val distanceValue = if (isMiles) distanceKm * KM_TO_MILES else distanceKm
+        val distanceLabel = if (isMiles) "mi" else "km"
+        val energyKcal = steps * KCAL_PER_STEP
+        val isKj = energyUnit == "kj"
+        val energyValue = if (isKj) energyKcal * KCAL_TO_KJ else energyKcal
+        val energyLabel = if (isKj) "kJ" else "kcal"
+        val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+        val stepsFormatted = java.text.NumberFormat.getNumberInstance(locale).format(steps)
+        val stepsUnit = if (language.startsWith("es")) "pasos" else "steps"
+        val stepsText = "$stepsFormatted $stepsUnit"
+        val distanceFormatter = DecimalFormat("0.0", DecimalFormatSymbols.getInstance(locale))
+        val contentView = RemoteViews(packageName, R.layout.daily_goal_notification).apply {
+            setTextViewText(R.id.daily_goal_badge, badgeText)
+            setTextViewText(R.id.daily_goal_steps, stepsText)
+            setTextViewText(R.id.daily_goal_time, formatCompletionTime())
+            setTextViewText(R.id.daily_goal_distance, "${distanceFormatter.format(distanceValue)} $distanceLabel")
+            setTextViewText(R.id.daily_goal_calories, "${formatWholeNumber(energyValue, language)} $energyLabel")
+        }
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val contentIntent = launchIntent?.let {
+            PendingIntent.getActivity(
+                this,
+                DAILY_GOAL_NOTIF_ID,
+                it,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+        return NotificationCompat.Builder(this, DAILY_GOAL_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notif_journey)
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(contentView)
+            .setCustomBigContentView(contentView)
+            .setContentTitle(badgeText)
+            .setContentText(stepsText)
+            .setAutoCancel(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .apply {
+                if (contentIntent != null) {
+                    setContentIntent(contentIntent)
+                }
+            }
+            .build()
+    }
+
+    private fun buildDailyGoalFallbackNotification(steps: Int): Notification {
+        val language = preferencesManager.getLanguage().lowercase(Locale.ROOT)
+        val title = if (language.startsWith("es")) "¡Objetivo diario alcanzado!" else "Daily goal reached!"
+        val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+        val stepsFormatted = java.text.NumberFormat.getNumberInstance(locale).format(steps)
+        val stepsUnit = if (language.startsWith("es")) "pasos" else "steps"
+        val text = "$stepsFormatted $stepsUnit"
+        return NotificationCompat.Builder(this, DAILY_GOAL_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notif_journey)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+    }
+
     private fun buildJourneyCompletedFallbackNotification(destinationName: String?): Notification {
         val language = preferencesManager.getLanguage().lowercase(Locale.ROOT)
         val title = if (language.startsWith("es")) "Has llegado" else "You've arrived"
@@ -614,6 +752,18 @@ class StepTrackerService : Service(), SensorEventListener {
                     NotificationManager.IMPORTANCE_DEFAULT
                 ).apply {
                     description = "Notificaciones cuando un journey se completa"
+                    setShowBadge(true)
+                }
+            )
+        }
+        if (nm.getNotificationChannel(DAILY_GOAL_CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    DAILY_GOAL_CHANNEL_ID,
+                    "Objetivo diario",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Notificación cuando se alcanza el objetivo diario de pasos"
                     setShowBadge(true)
                 }
             )
