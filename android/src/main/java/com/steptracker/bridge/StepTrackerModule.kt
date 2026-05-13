@@ -5,8 +5,11 @@ import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.os.Build
@@ -18,6 +21,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.facebook.react.bridge.*
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.ApiException
@@ -58,6 +62,13 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
     override fun getName() = "StepTrackerModule"
 
+    override fun invalidate() {
+        try {
+            reactContext.unregisterReceiver(stepUpdateReceiver)
+        } catch (_: Exception) {}
+        super.invalidate()
+    }
+
     companion object {
         private const val METERS_PER_STEP = 0.8
         private const val KM_TO_MILES = 0.621371
@@ -83,11 +94,28 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     private val statsRepo = StepStatsRepository(db, prefsManager, historyRepo)
     private val journeyRepo = JourneyRepository(db)
 
+    private val stepUpdateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val steps = intent?.getIntExtra(StepTrackerService.EXTRA_STEPS, -1) ?: return
+            if (steps < 0) return
+            try {
+                val map = buildBasicStatsMap(steps)
+                reactContext
+                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("StepTrackerUpdate", map)
+            } catch (_: Exception) {}
+        }
+    }
+
     init {
         android.util.Log.d("StepTrackerModule", "Module initialized, DB version: ${dbHelper.readableDatabase.version}")
         android.util.Log.d("StepTrackerModule", "Database path: ${reactContext.getDatabasePath("steps.db").absolutePath}")
         reactContext.addActivityEventListener(this)
         ensureJourneyTablesExist()
+        reactContext.registerReceiver(
+            stepUpdateReceiver,
+            IntentFilter(StepTrackerService.ACTION_STEPS_UPDATE),
+        )
 
         // Re-programar backup Drive si estaba activado (sobrevive a reinicios)
         if (prefsManager.isDriveAutoBackupEnabled()) {
