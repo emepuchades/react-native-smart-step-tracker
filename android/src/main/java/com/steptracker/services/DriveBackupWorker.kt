@@ -150,6 +150,19 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, pa
         journeyCursor.close()
         root.put("journeys", journeyArray)
 
+        val journeyLogArray = JSONArray()
+        val journeyLogCursor = db.rawQuery("SELECT * FROM journey_daily_log", null)
+        while (journeyLogCursor.moveToNext()) {
+            val obj = JSONObject()
+            for (i in 0 until journeyLogCursor.columnCount) {
+                val value = journeyLogCursor.getString(i)
+                if (value != null) obj.put(journeyLogCursor.getColumnName(i), value)
+            }
+            journeyLogArray.put(obj)
+        }
+        journeyLogCursor.close()
+        root.put("journey_daily_log", journeyLogArray)
+
         return root.toString(2)
     }
 

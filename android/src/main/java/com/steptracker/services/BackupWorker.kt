@@ -75,6 +75,32 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
         dailyCursor.close()
         root.put("daily_history", dailyArray)
 
+        val journeyArray = JSONArray()
+        val journeyCursor = db.rawQuery("SELECT * FROM journeys", null)
+        while (journeyCursor.moveToNext()) {
+            val obj = JSONObject()
+            for (i in 0 until journeyCursor.columnCount) {
+                val value = journeyCursor.getString(i)
+                if (value != null) obj.put(journeyCursor.getColumnName(i), value)
+            }
+            journeyArray.put(obj)
+        }
+        journeyCursor.close()
+        root.put("journeys", journeyArray)
+
+        val journeyLogArray = JSONArray()
+        val journeyLogCursor = db.rawQuery("SELECT * FROM journey_daily_log", null)
+        while (journeyLogCursor.moveToNext()) {
+            val obj = JSONObject()
+            for (i in 0 until journeyLogCursor.columnCount) {
+                val value = journeyLogCursor.getString(i)
+                if (value != null) obj.put(journeyLogCursor.getColumnName(i), value)
+            }
+            journeyLogArray.put(obj)
+        }
+        journeyLogCursor.close()
+        root.put("journey_daily_log", journeyLogArray)
+
         return root.toString(2)
     }
 

@@ -773,6 +773,32 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         dailyCursor.close()
         root.put("daily_history", dailyArray)
 
+        val journeyArray = JSONArray()
+        val journeyCursor = db.rawQuery("SELECT * FROM journeys", null)
+        while (journeyCursor.moveToNext()) {
+            val obj = JSONObject()
+            for (i in 0 until journeyCursor.columnCount) {
+                val value = journeyCursor.getString(i)
+                if (value != null) obj.put(journeyCursor.getColumnName(i), value)
+            }
+            journeyArray.put(obj)
+        }
+        journeyCursor.close()
+        root.put("journeys", journeyArray)
+
+        val journeyLogArray = JSONArray()
+        val journeyLogCursor = db.rawQuery("SELECT * FROM journey_daily_log", null)
+        while (journeyLogCursor.moveToNext()) {
+            val obj = JSONObject()
+            for (i in 0 until journeyLogCursor.columnCount) {
+                val value = journeyLogCursor.getString(i)
+                if (value != null) obj.put(journeyLogCursor.getColumnName(i), value)
+            }
+            journeyLogArray.put(obj)
+        }
+        journeyLogCursor.close()
+        root.put("journey_daily_log", journeyLogArray)
+
         return root.toString(2)
     }
 
@@ -1187,6 +1213,69 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
                         "daily_history", null, values,
                         SQLiteDatabase.CONFLICT_REPLACE,
                     )
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        }
+
+        // Journeys: merge con CONFLICT_IGNORE → los viajes locales existentes no se sobreescriben,
+        // y los viajes del backup que no existen localmente se añaden.
+        val journeysArray = root.optJSONArray("journeys")
+        if (journeysArray != null) {
+            db.beginTransaction()
+            try {
+                for (i in 0 until journeysArray.length()) {
+                    val item = journeysArray.getJSONObject(i)
+                    val values = ContentValues().apply {
+                        put("journeyId",          item.optString("journeyId"))
+                        put("status",             item.optString("status"))
+                        put("destination_name",   item.optString("destination_name"))
+                        put("destination_lat",    item.optDouble("destination_lat", 0.0))
+                        put("destination_lon",    item.optDouble("destination_lon", 0.0))
+                        put("destination_address",item.optString("destination_address"))
+                        put("origin_name",        item.optString("origin_name"))
+                        put("origin_lat",         item.optDouble("origin_lat", 0.0))
+                        put("origin_lon",         item.optDouble("origin_lon", 0.0))
+                        put("origin_address",     item.optString("origin_address"))
+                        put("route_coords",       item.optString("route_coords"))
+                        put("total_distance_km",  item.optDouble("total_distance_km", 0.0))
+                        put("checkpoints",        item.optString("checkpoints"))
+                        put("created_at",         item.optString("created_at"))
+                        put("started_at",         item.optString("started_at"))
+                        put("completed_at",       item.optString("completed_at"))
+                    }
+                    db.insertWithOnConflict("journeys", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        }
+
+        // Journey daily log: merge con CONFLICT_IGNORE → el progreso local tiene preferencia.
+        val journeyLogArray = root.optJSONArray("journey_daily_log")
+        if (journeyLogArray != null) {
+            db.beginTransaction()
+            try {
+                for (i in 0 until journeyLogArray.length()) {
+                    val item = journeyLogArray.getJSONObject(i)
+                    val values = ContentValues().apply {
+                        put("id",                          item.optString("id"))
+                        put("journeyId",                   item.optString("journeyId"))
+                        put("date",                        item.optString("date"))
+                        put("trip_day_number",             item.optInt("trip_day_number", 0))
+                        put("is_paused",                   item.optInt("is_paused", 0))
+                        put("current_checkpoint",          item.optInt("current_checkpoint", 0))
+                        put("current_location_name",       item.optString("current_location_name"))
+                        put("current_location_lat",        item.optDouble("current_location_lat", 0.0))
+                        put("current_location_lon",        item.optDouble("current_location_lon", 0.0))
+                        put("total_walked_km_in_journey",  item.optDouble("total_walked_km_in_journey", 0.0))
+                        put("progress_percent",            item.optDouble("progress_percent", 0.0))
+                        put("created_at",                  item.optString("created_at"))
+                    }
+                    db.insertWithOnConflict("journey_daily_log", null, values, SQLiteDatabase.CONFLICT_IGNORE)
                 }
                 db.setTransactionSuccessful()
             } finally {
