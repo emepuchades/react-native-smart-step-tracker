@@ -284,6 +284,18 @@ class StepTrackerService : Service(), SensorEventListener {
         }
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Re-registrar el listener del sensor en cada llamada a startTracking().
+        // Es necesario cuando el permiso ACTIVITY_RECOGNITION se concede mientras
+        // el servicio ya está en marcha: el sistema no reactiva la entrega de eventos
+        // hasta que el listener se desregistra y se vuelve a registrar con el permiso activo.
+        sensorManager.unregisterListener(this)
+        if (!registerAvailableSensor()) {
+            stopSelf()
+        }
+        return START_STICKY
+    }
+
     override fun onDestroy() {
         configRepo.set("last_counter", lastCounter.toString())
         sensorManager.unregisterListener(this)
