@@ -157,15 +157,16 @@ class StepTrackerService : Service(), SensorEventListener {
                         val jWalkedValue = if (isMiles) jWalkedKm * KM_TO_MILES else jWalkedKm
                         val jTotalValue = if (isMiles) jTotalKm * KM_TO_MILES else jTotalKm
                         val jProgress = if (jTotalKm > 0.0) ((jWalkedKm / jTotalKm) * 100.0).roundToInt() else 0
+                        val ns = NotificationStrings.forLanguage(language)
                         val origin = jCursor.getString(0)?.takeIf { it.isNotBlank() }
                             ?.let(::compactOriginName)
-                            ?: if (language.startsWith("es")) "Origen" else "Origin"
+                            ?: ns.origin
                         val dest = jCursor.getString(1)?.takeIf { it.isNotBlank() }
-                            ?: if (language.startsWith("es")) "destino" else "destination"
+                            ?: ns.destination
                         journeyRouteText = "$origin \u2192 $dest"
                         if (jRemainingKm <= 0.0) {
                             journeyPercentText = "100%"
-                            journeyDistanceText = if (language.startsWith("es")) "completado" else "completed"
+                            journeyDistanceText = ns.completed
                         } else {
                             journeyPercentText = "${jProgress}%"
                             journeyDistanceText = "${formatOneDecimal(jWalkedValue, language)} / ${formatOneDecimal(jTotalValue, language)} $distanceUnit"
@@ -190,14 +191,15 @@ class StepTrackerService : Service(), SensorEventListener {
         }
 
         private fun buildStepsText(steps: Int, language: String): String {
-            val unit = if (language.startsWith("es")) "pasos" else "steps"
-            val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+            val ns = NotificationStrings.forLanguage(language)
+            val unit = ns.steps
+            val locale = ns.locale
             val formatted = java.text.NumberFormat.getNumberInstance(locale).format(steps)
             return "$formatted $unit"
         }
 
         private fun dailyNotificationTitle(language: String): String =
-            if (language.startsWith("es")) "Contando pasos" else "Counting steps"
+            NotificationStrings.forLanguage(language).countingSteps
 
         private fun compactOriginName(value: String): String {
             val candidate = value
@@ -209,7 +211,7 @@ class StepTrackerService : Service(), SensorEventListener {
         }
 
         private fun formatWholeNumber(value: Double, language: String): String {
-            val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+            val locale = NotificationStrings.forLanguage(language).locale
             val formatter = DecimalFormat("#,##0", DecimalFormatSymbols.getInstance(locale)).apply {
                 isGroupingUsed = true
             }
@@ -217,7 +219,7 @@ class StepTrackerService : Service(), SensorEventListener {
         }
 
         private fun formatOneDecimal(value: Double, language: String): String {
-            val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+            val locale = NotificationStrings.forLanguage(language).locale
             val formatter = DecimalFormat("0.0", DecimalFormatSymbols.getInstance(locale)).apply {
                 isGroupingUsed = false
             }
@@ -232,7 +234,7 @@ class StepTrackerService : Service(), SensorEventListener {
                 return value.toString()
             }
 
-            val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+            val locale = NotificationStrings.forLanguage(language).locale
             val formatter = DecimalFormat("0.#", DecimalFormatSymbols.getInstance(locale)).apply {
                 isGroupingUsed = false
             }
@@ -532,10 +534,11 @@ class StepTrackerService : Service(), SensorEventListener {
     ): Notification {
         val language = preferencesManager.getLanguage().lowercase(Locale.ROOT)
         val distanceUnit = preferencesManager.getDistanceUnit().lowercase(Locale.ROOT)
+        val ns = NotificationStrings.forLanguage(language)
         val safeDestination = destinationName?.takeIf { it.isNotBlank() }
-            ?: if (language.startsWith("es")) "Tu destino" else "Your destination"
+            ?: ns.yourDestination
         val totalSteps = getJourneyTotalSteps(journeyId)
-        val badgeText = if (language.startsWith("es")) "Has llegado" else "You've arrived"
+        val badgeText = ns.arrived
         val contentView = RemoteViews(packageName, R.layout.journey_completed_notification).apply {
             setTextViewText(R.id.journey_notification_badge, badgeText)
             setTextViewText(R.id.journey_notification_destination, safeDestination)
@@ -599,7 +602,8 @@ class StepTrackerService : Service(), SensorEventListener {
         val language = preferencesManager.getLanguage().lowercase(Locale.ROOT)
         val distanceUnit = preferencesManager.getDistanceUnit().lowercase(Locale.ROOT)
         val energyUnit = preferencesManager.getEnergyUnit().lowercase(Locale.ROOT)
-        val badgeText = if (language.startsWith("es")) "¡Objetivo diario!" else "Daily goal!"
+        val ns = NotificationStrings.forLanguage(language)
+        val badgeText = ns.dailyGoalTitle
         val distanceKm = steps * KM_PER_STEP
         val isMiles = distanceUnit == "miles" || distanceUnit == "mi"
         val distanceValue = if (isMiles) distanceKm * KM_TO_MILES else distanceKm
@@ -608,9 +612,9 @@ class StepTrackerService : Service(), SensorEventListener {
         val isKj = energyUnit == "kj"
         val energyValue = if (isKj) energyKcal * KCAL_TO_KJ else energyKcal
         val energyLabel = if (isKj) "kJ" else "kcal"
-        val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+        val locale = ns.locale
         val stepsFormatted = java.text.NumberFormat.getNumberInstance(locale).format(steps)
-        val stepsUnit = if (language.startsWith("es")) "pasos" else "steps"
+        val stepsUnit = ns.steps
         val stepsText = "$stepsFormatted $stepsUnit"
         val distanceFormatter = DecimalFormat("0.0", DecimalFormatSymbols.getInstance(locale))
         val contentView = RemoteViews(packageName, R.layout.daily_goal_notification).apply {
@@ -651,10 +655,11 @@ class StepTrackerService : Service(), SensorEventListener {
 
     private fun buildDailyGoalFallbackNotification(steps: Int): Notification {
         val language = preferencesManager.getLanguage().lowercase(Locale.ROOT)
-        val title = if (language.startsWith("es")) "¡Objetivo diario alcanzado!" else "Daily goal reached!"
-        val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+        val ns = NotificationStrings.forLanguage(language)
+        val title = ns.dailyGoalReached
+        val locale = ns.locale
         val stepsFormatted = java.text.NumberFormat.getNumberInstance(locale).format(steps)
-        val stepsUnit = if (language.startsWith("es")) "pasos" else "steps"
+        val stepsUnit = ns.steps
         val text = "$stepsFormatted $stepsUnit"
         return NotificationCompat.Builder(this, DAILY_GOAL_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notif_journey)
@@ -668,9 +673,10 @@ class StepTrackerService : Service(), SensorEventListener {
 
     private fun buildJourneyCompletedFallbackNotification(destinationName: String?): Notification {
         val language = preferencesManager.getLanguage().lowercase(Locale.ROOT)
-        val title = if (language.startsWith("es")) "Has llegado" else "You've arrived"
+        val ns = NotificationStrings.forLanguage(language)
+        val title = ns.arrived
         val safeDestination = destinationName?.takeIf { it.isNotBlank() }
-            ?: if (language.startsWith("es")) "Tu destino" else "Your destination"
+            ?: ns.yourDestination
 
         return NotificationCompat.Builder(this, JOURNEY_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notif_journey)
@@ -703,7 +709,7 @@ class StepTrackerService : Service(), SensorEventListener {
     }
 
     private fun formatJourneyDistance(distanceKm: Double, distanceUnit: String, language: String): String {
-        val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+        val locale = NotificationStrings.forLanguage(language).locale
         val useMiles = distanceUnit == "miles" || distanceUnit == "mi"
         val convertedDistance = if (useMiles) distanceKm * KM_TO_MILES else distanceKm
         val unitLabel = if (useMiles) "mi" else "km"
@@ -719,7 +725,7 @@ class StepTrackerService : Service(), SensorEventListener {
             return steps.toString()
         }
 
-        val locale = if (language.startsWith("es")) Locale("es", "ES") else Locale.US
+        val locale = NotificationStrings.forLanguage(language).locale
         val formatter = DecimalFormat("0.#", DecimalFormatSymbols.getInstance(locale))
         return "${formatter.format(steps / 1000.0)}k"
     }

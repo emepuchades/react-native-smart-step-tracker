@@ -12,6 +12,7 @@ import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
 import com.google.android.gms.tasks.Tasks
+import com.steptracker.NotificationStrings
 import com.steptracker.data.steps.StepsDatabaseHelper
 import com.steptracker.data.steps.ConfigRepository
 import com.steptracker.data.steps.UserPreferencesManager
@@ -68,7 +69,7 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, pa
             val isoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).format(Date())
             prefsManager.setLastBackupDate(isoDate)
             Log.d(TAG, "Drive backup completed at $isoDate")
-            showSuccessNotification()
+            showSuccessNotification(prefsManager.getLanguage())
             db.close()
             Result.success()
         } catch (e: Exception) {
@@ -224,7 +225,8 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, pa
         }
     }
 
-    private fun showSuccessNotification() {
+    private fun showSuccessNotification(language: String) {
+        val ns = NotificationStrings.forLanguage(language)
         val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             nm.createNotificationChannel(
@@ -236,7 +238,7 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, pa
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_sync)
             .setContentTitle("StepJourney")
-            .setContentText("Copia de seguridad guardada en Google Drive")
+            .setContentText(ns.driveBackupSaved)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setAutoCancel(true)
             .build()

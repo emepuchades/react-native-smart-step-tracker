@@ -30,6 +30,7 @@ import com.google.android.gms.tasks.Tasks
 import java.net.URL
 import java.net.URLEncoder
 import com.steptracker.StepSyncWorker
+import com.steptracker.NotificationStrings
 import com.steptracker.StepTrackerService
 import com.steptracker.services.BackupWorker
 import com.steptracker.services.DriveBackupWorker
@@ -1360,13 +1361,9 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
             return
         }
 
-        val isSpanish = prefsManager.getLanguage().lowercase(Locale.ROOT).startsWith("es")
-        val channelName = if (isSpanish) "Insignias desbloqueadas" else "Unlocked badges"
-        val channelDescription = if (isSpanish) {
-            "Notificaciones cuando desbloqueas una insignia nueva"
-        } else {
-            "Notifications when you unlock a new badge"
-        }
+        val ns = NotificationStrings.forLanguage(prefsManager.getLanguage())
+        val channelName = ns.channelBadges
+        val channelDescription = ns.channelBadgesDesc
 
         notificationManager.createNotificationChannel(
             NotificationChannel(
@@ -1382,11 +1379,9 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
     private fun showBadgeUnlockNotification(badge: BadgeNotificationPayload): Boolean {
         return try {
-            val isSpanish = prefsManager.getLanguage().lowercase(Locale.ROOT).startsWith("es")
-            val contentTitle = if (isSpanish) "Nueva insignia desbloqueada" else "New badge unlocked"
-            val contentText = badge.title.ifBlank {
-                if (isSpanish) "Has ganado una insignia" else "You earned a badge"
-            }
+            val ns = NotificationStrings.forLanguage(prefsManager.getLanguage())
+            val contentTitle = ns.newBadgeUnlocked
+            val contentText = badge.title.ifBlank { ns.earnedBadge }
             val expandedText = badge.description.ifBlank { contentText }
 
             val launchIntent = reactContext.packageManager

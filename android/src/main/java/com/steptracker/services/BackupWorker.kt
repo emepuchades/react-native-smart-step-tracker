@@ -9,7 +9,10 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import com.steptracker.NotificationStrings
+import com.steptracker.data.steps.ConfigRepository
 import com.steptracker.data.steps.StepsDatabaseHelper
+import com.steptracker.data.steps.UserPreferencesManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -105,12 +108,15 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
     }
 
     private fun showBackupNotification(filePath: String) {
+        val ns = NotificationStrings.forLanguage(
+            UserPreferencesManager(ConfigRepository(db)).getLanguage()
+        )
         val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 BACKUP_CHANNEL_ID,
-                "Copias de seguridad",
+                ns.channelBackups,
                 NotificationManager.IMPORTANCE_DEFAULT,
             )
             nm.createNotificationChannel(channel)
@@ -118,8 +124,8 @@ class BackupWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params)
 
         val notification = NotificationCompat.Builder(applicationContext, BACKUP_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_save)
-            .setContentTitle("Copia de seguridad creada")
-            .setStyle(NotificationCompat.BigTextStyle().bigText("Guardada en: $filePath"))
+            .setContentTitle(ns.backupCreated)
+            .setStyle(NotificationCompat.BigTextStyle().bigText("${ns.savedIn}$filePath"))
             .setAutoCancel(true)
             .build()
 
