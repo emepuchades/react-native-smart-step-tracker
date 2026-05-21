@@ -131,7 +131,8 @@ class UserPreferencesManager(private val config: ConfigRepository) {
 
     fun getUserPreferences(): WritableMap {
         return Arguments.createMap().apply {
-            putString(KEY_LANGUAGE, getLanguage())
+            val storedLang = config.get(KEY_LANGUAGE)
+            if (storedLang != null) putString(KEY_LANGUAGE, storedLang) else putNull(KEY_LANGUAGE)
             putString(KEY_WEEK_START, getWeekStart())
             putString(KEY_DISTANCE_UNIT, getDistanceUnit())
             putString(KEY_ENERGY_UNIT, getEnergyUnit())
