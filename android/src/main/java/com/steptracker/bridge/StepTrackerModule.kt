@@ -238,7 +238,9 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun startTracking() {
-        val intent = Intent(reactContext, StepTrackerService::class.java)
+        val intent = Intent(reactContext, StepTrackerService::class.java).apply {
+            action = StepTrackerService.ACTION_RE_REGISTER_SENSOR
+        }
         ContextCompat.startForegroundService(reactContext, intent)
     }
 

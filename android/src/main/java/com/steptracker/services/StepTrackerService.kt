@@ -7,6 +7,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Build
 import android.os.IBinder
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
@@ -35,6 +36,8 @@ class StepTrackerService : Service(), SensorEventListener {
 
         const val ACTION_STEPS_UPDATE = "com.steptracker.STEPS_UPDATE"
         const val EXTRA_STEPS = "steps_today"
+        const val ACTION_RE_REGISTER_SENSOR = "com.steptracker.RE_REGISTER_SENSOR"
+        const val ACTION_MIDNIGHT_RESET = "com.steptracker.MIDNIGHT_RESET"
 
         @Volatile
         var allowStepCounter: Boolean? = false
@@ -284,18 +287,59 @@ class StepTrackerService : Service(), SensorEventListener {
             stopSelf()
             return
         }
+
+        scheduleMidnightReset()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Re-registrar el listener del sensor en cada llamada a startTracking().
-        // Es necesario cuando el permiso ACTIVITY_RECOGNITION se concede mientras
-        // el servicio ya está en marcha: el sistema no reactiva la entrega de eventos
-        // hasta que el listener se desregistra y se vuelve a registrar con el permiso activo.
-        sensorManager.unregisterListener(this)
-        if (!registerAvailableSensor()) {
-            stopSelf()
+        when (intent?.action) {
+            ACTION_RE_REGISTER_SENSOR -> {
+                // Llamada explícita desde startTracking(): re-registrar sensores.
+                // Necesario cuando el permiso ACTIVITY_RECOGNITION se concede mientras
+                // el servicio ya está en marcha.
+                sensorManager.unregisterListener(this)
+                if (!registerAvailableSensor()) {
+                    stopSelf()
+                }
+            }
+            ACTION_MIDNIGHT_RESET -> {
+                // Alarma de medianoche: resetear el contador a 0 para el nuevo día.
+                broadcastAndNotify(0)
+                scheduleMidnightReset()
+            }
+            // null (START_STICKY) o cualquier otra acción: sensores ya registrados en onCreate().
         }
         return START_STICKY
+    }
+
+    private fun scheduleMidnightReset() {
+        val midnight = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val serviceIntent = Intent(this, StepTrackerService::class.java).apply {
+            action = ACTION_MIDNIGHT_RESET
+        }
+        // getForegroundService (API 26+) permite arrancar el servicio desde segundo plano.
+        // En API < 26 no hay restricción para startService desde alarmas.
+        val pi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(
+                this, 0, serviceIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        } else {
+            PendingIntent.getService(
+                this, 0, serviceIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+        // setAndAllowWhileIdle: dispara incluso en modo Doze, sin requerir
+        // el permiso SCHEDULE_EXACT_ALARM. Puede retrasarse unos minutos, aceptable.
+        val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, midnight.timeInMillis, pi)
     }
 
     override fun onDestroy() {

@@ -1,7 +1,9 @@
 package com.steptracker
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.steptracker.data.steps.*
@@ -17,6 +19,15 @@ class StepSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, param
     private val historyRepo = StepHistoryRepository(db, configRepo)
 
     override fun doWork(): Result {
+        // Reiniciar el servicio si fue matado por el sistema operativo.
+        // Intent sin acción especial: onCreate() registrará los sensores si es necesario.
+        try {
+            val serviceIntent = Intent(applicationContext, StepTrackerService::class.java)
+            ContextCompat.startForegroundService(applicationContext, serviceIntent)
+        } catch (e: Exception) {
+            Log.e("StepSyncWorker", "No se pudo reiniciar StepTrackerService", e)
+        }
+
         val today = getToday()
         val steps = historyRepo.getStepsForDate(today)
 
