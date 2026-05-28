@@ -2,6 +2,8 @@ package com.steptracker
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.work.Worker
@@ -20,10 +22,26 @@ class StepSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, param
 
     override fun doWork(): Result {
         // Reiniciar el servicio si fue matado por el sistema operativo.
-        // Intent sin acción especial: onCreate() registrará los sensores si es necesario.
+        // Solo lo hacemos si el permiso ACTIVITY_RECOGNITION está concedido:
+        // si no lo está, startForegroundService() arrancaría el servicio pero este
+        // no podría llamar startForeground() (requiere el permiso en API 34+),
+        // causando ForegroundServiceDidNotStartInTimeException y crash de la app.
+        val hasActivityPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(
+                applicationContext,
+                android.Manifest.permission.ACTIVITY_RECOGNITION
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+
         try {
-            val serviceIntent = Intent(applicationContext, StepTrackerService::class.java)
-            ContextCompat.startForegroundService(applicationContext, serviceIntent)
+            if (hasActivityPermission) {
+                val serviceIntent = Intent(applicationContext, StepTrackerService::class.java)
+                ContextCompat.startForegroundService(applicationContext, serviceIntent)
+            } else {
+                Log.d("StepSyncWorker", "ACTIVITY_RECOGNITION no concedido, omitiendo reinicio del servicio")
+            }
         } catch (e: Exception) {
             Log.e("StepSyncWorker", "No se pudo reiniciar StepTrackerService", e)
         }
@@ -33,7 +51,9 @@ class StepSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, param
 
         Log.d("StepSyncWorker", "Sync → $steps pasos del día $today")
 
-        StepTrackerService.updateNotificationExternally(applicationContext, steps)
+        if (hasActivityPermission) {
+            StepTrackerService.updateNotificationExternally(applicationContext, steps)
+        }
 
         return Result.success()
     }

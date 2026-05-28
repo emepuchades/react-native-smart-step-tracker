@@ -113,9 +113,11 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         android.util.Log.d("StepTrackerModule", "Database path: ${reactContext.getDatabasePath("steps.db").absolutePath}")
         reactContext.addActivityEventListener(this)
         ensureJourneyTablesExist()
-        reactContext.registerReceiver(
+        ContextCompat.registerReceiver(
+            reactContext,
             stepUpdateReceiver,
             IntentFilter(StepTrackerService.ACTION_STEPS_UPDATE),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
         )
 
         // Re-programar backup Drive si estaba activado (sobrevive a reinicios)
@@ -236,12 +238,37 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     }
 
 
+    /**
+     * Android 10+ (API 29) requiere ACTIVITY_RECOGNITION para sensores de pasos.
+     * Android 14+ (API 34) y Android 36 exigen el permiso para arrancar un FGS de
+     * tipo "health" — incluso antes de llamar startForeground().
+     * Si el permiso no está concedido, NO llamamos startForegroundService() porque
+     * el servicio no podría llamar startForeground() correctamente y Android lanzaría
+     * ForegroundServiceDidNotStartInTimeException a los 5 s.
+     */
+    private fun hasActivityRecognitionPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+        return ContextCompat.checkSelfPermission(
+            reactContext, Manifest.permission.ACTIVITY_RECOGNITION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     @ReactMethod
     fun startTracking() {
-        val intent = Intent(reactContext, StepTrackerService::class.java).apply {
-            action = StepTrackerService.ACTION_RE_REGISTER_SENSOR
+        if (!hasActivityRecognitionPermission()) {
+            android.util.Log.w("StepTracker", "startTracking: ACTIVITY_RECOGNITION no concedido, omitiendo")
+            return
         }
-        ContextCompat.startForegroundService(reactContext, intent)
+        try {
+            val intent = Intent(reactContext, StepTrackerService::class.java).apply {
+                action = StepTrackerService.ACTION_RE_REGISTER_SENSOR
+            }
+            ContextCompat.startForegroundService(reactContext, intent)
+        } catch (e: Exception) {
+            // Android 12+: ForegroundServiceStartNotAllowedException si la app
+            // está en segundo plano. El servicio se reiniciará al volver al frente.
+            android.util.Log.w("StepTracker", "startTracking: no se pudo arrancar el servicio", e)
+        }
     }
 
     @ReactMethod
@@ -252,11 +279,19 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun ensureServiceRunning() {
-        val intent = Intent().apply {
-            setClassName(reactContext, "com.steptracker.StepTrackerService")
-            action = "RESTART_SERVICE"
+        if (!hasActivityRecognitionPermission()) {
+            android.util.Log.w("StepTracker", "ensureServiceRunning: ACTIVITY_RECOGNITION no concedido, omitiendo")
+            return
         }
-        ContextCompat.startForegroundService(reactContext, intent)
+        try {
+            val intent = Intent().apply {
+                setClassName(reactContext, "com.steptracker.StepTrackerService")
+                action = "RESTART_SERVICE"
+            }
+            ContextCompat.startForegroundService(reactContext, intent)
+        } catch (e: Exception) {
+            android.util.Log.w("StepTracker", "ensureServiceRunning: no se pudo arrancar el servicio", e)
+        }
     }
 
     @ReactMethod

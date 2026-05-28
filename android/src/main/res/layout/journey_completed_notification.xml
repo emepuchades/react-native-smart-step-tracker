@@ -2,7 +2,7 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="#FFFFFF"
+    android:background="@color/notif_bg"
     android:orientation="vertical"
     android:padding="12dp">
 
@@ -27,7 +27,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="14:32"
-            android:textColor="#7B8794"
+            android:textColor="@color/notif_text_muted"
             android:textSize="11sp" />
     </LinearLayout>
 
@@ -39,7 +39,7 @@
         android:ellipsize="end"
         android:maxLines="1"
         android:text="Destino"
-        android:textColor="#101828"
+        android:textColor="@color/notif_text_primary"
         android:textSize="15sp"
         android:textStyle="bold" />
 
@@ -54,7 +54,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="&#x23F1;"
-            android:textColor="#7B8794"
+            android:textColor="@color/notif_text_muted"
             android:textSize="11sp" />
 
         <TextView
@@ -63,7 +63,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="3dp"
             android:text="6h 42m"
-            android:textColor="#52606D"
+            android:textColor="@color/notif_text_secondary"
             android:textSize="11sp" />
 
         <TextView
@@ -72,14 +72,14 @@
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
             android:text="|"
-            android:textColor="#D1D5DB"
+            android:textColor="@color/notif_separator"
             android:textSize="11sp" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="&#x2191;"
-            android:textColor="#7B8794"
+            android:textColor="@color/notif_text_muted"
             android:textSize="11sp" />
 
         <TextView
@@ -88,7 +88,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="3dp"
             android:text="28.5 km"
-            android:textColor="#52606D"
+            android:textColor="@color/notif_text_secondary"
             android:textSize="11sp" />
 
         <TextView
@@ -97,14 +97,14 @@
             android:layout_marginStart="8dp"
             android:layout_marginEnd="8dp"
             android:text="|"
-            android:textColor="#D1D5DB"
+            android:textColor="@color/notif_separator"
             android:textSize="11sp" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="&#x26A1;"
-            android:textColor="#7B8794"
+            android:textColor="@color/notif_text_muted"
             android:textSize="11sp" />
 
         <TextView
@@ -113,7 +113,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="3dp"
             android:text="32.5k"
-            android:textColor="#52606D"
+            android:textColor="@color/notif_text_secondary"
             android:textSize="11sp" />
     </LinearLayout>
 </LinearLayout>

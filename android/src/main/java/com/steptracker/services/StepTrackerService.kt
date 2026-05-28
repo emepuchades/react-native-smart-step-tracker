@@ -3,6 +3,8 @@ package com.steptracker
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -11,6 +13,8 @@ import android.os.Build
 import android.os.IBinder
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import com.steptracker.data.steps.*
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
@@ -280,8 +284,56 @@ class StepTrackerService : Service(), SensorEventListener {
         val stepsFromDb = safeSteps(historyRepo.getStepsForDate(todayStr()))
         detectorStepsToday = stepsFromDb
 
+        // Android 10+ (API 29+): ACTIVITY_RECOGNITION es requerido para el sensor de pasos
+        // Y para arrancar un FGS de tipo "health" (obligatorio desde API 34, Android 36 lo
+        // hace fatal incluso en el fallback sin tipo si el manifest declara foregroundServiceType).
+        // Si no está concedido, debemos llamar startForeground() igualmente antes de stopSelf()
+        // para satisfacer la regla de los 5 segundos de Android; de lo contrario el sistema
+        // lanza ForegroundServiceDidNotStartInTimeException y mata la app.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACTIVITY_RECOGNITION)
+                != PackageManager.PERMISSION_GRANTED) {
+            android.util.Log.w("StepTracker", "onCreate: ACTIVITY_RECOGNITION no concedido, servicio detenido")
+            // Satisfacer el contrato de Android: llamar startForeground() antes de stopSelf()
+            try {
+                val placeholderNotif = buildBaseNotification(this, 0)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ServiceCompat.startForeground(
+                        this, NOTIF_ID, placeholderNotif,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+                    )
+                } else {
+                    startForeground(NOTIF_ID, placeholderNotif)
+                }
+            } catch (_: Exception) {
+                // En API 34+ startForeground con FOREGROUND_SERVICE_TYPE_HEALTH puede lanzar
+                // SecurityException si el permiso no está concedido. Lo ignoramos: el fix
+                // principal está en StepSyncWorker que no debe llamar startForegroundService()
+                // sin el permiso. Este bloque es defensa en profundidad.
+            }
+            stopSelf()
+            return
+        }
+
         // Mostrar pasos reales desde el primer momento (no 0)
-        startForeground(NOTIF_ID, buildBaseNotification(this, stepsFromDb))
+        val notification = buildBaseNotification(this, stepsFromDb)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    this, NOTIF_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+                )
+            } else {
+                startForeground(NOTIF_ID, notification)
+            }
+        } catch (e: Exception) {
+            // startForeground puede lanzar SecurityException o ForegroundServiceStartNotAllowedException
+            // si la app está en segundo plano o el sistema rechaza el tipo.
+            // Detener el servicio limpiamente para evitar crash en el main thread.
+            android.util.Log.w("StepTracker", "startForeground falló: ${e.message}")
+            stopSelf()
+            return
+        }
 
         if (!registerAvailableSensor()) {
             stopSelf()
@@ -345,7 +397,7 @@ class StepTrackerService : Service(), SensorEventListener {
     override fun onDestroy() {
         configRepo.set("last_counter", lastCounter.toString())
         sensorManager.unregisterListener(this)
-        stopForeground(true)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
