@@ -1222,7 +1222,7 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    override fun onNewIntent(intent: Intent?) {}
+    override fun onNewIntent(intent: Intent) {}
 
     private fun restoreFromJson(json: String) {
         val root = JSONObject(json)

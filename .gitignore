@@ -59,6 +59,16 @@ fastlane/Preview.html
 fastlane/screenshots
 fastlane/test_output
 
+# Investigation/debug artifacts (MapLibre EGL analysis)
+egl_decompiled.txt
+egl_full.txt
+egl_inspect/
+maplibre_aar_inspect/
+maplibre_aar_v11/
+
+# Local databases
+android/steps.db
+
 # React Native cache
 tmp/
 logs/
