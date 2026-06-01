@@ -4,7 +4,7 @@
     android:layout_height="wrap_content"
     android:background="@color/notif_bg"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="8dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -14,13 +14,22 @@
 
         <TextView
             android:id="@+id/daily_goal_badge"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:background="@drawable/notif_badge_chip_bg"
+            android:paddingStart="8dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="4dp"
             android:text="¡Objetivo diario!"
-            android:textColor="#10B981"
+            android:textColor="@color/notif_success"
             android:textSize="11sp"
             android:textStyle="bold" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
 
         <TextView
             android:id="@+id/daily_goal_time"
@@ -46,47 +55,40 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:gravity="center_vertical"
+        android:layout_marginTop="8dp"
         android:orientation="horizontal">
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="&#x2191;"
-            android:textColor="@color/notif_text_muted"
-            android:textSize="11sp" />
-
-        <TextView
             android:id="@+id/daily_goal_distance"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="3dp"
+            android:layout_weight="1"
+            android:background="@drawable/notif_metric_chip_bg"
+            android:drawableStart="@drawable/ic_notif_arrow_up"
+            android:drawablePadding="4dp"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="5dp"
             android:text="8.0 km"
             android:textColor="@color/notif_text_secondary"
             android:textSize="11sp" />
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_marginEnd="8dp"
-            android:text="|"
-            android:textColor="@color/notif_separator"
-            android:textSize="11sp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="&#x26A1;"
-            android:textColor="@color/notif_text_muted"
-            android:textSize="11sp" />
-
-        <TextView
             android:id="@+id/daily_goal_calories"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="3dp"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/notif_metric_chip_bg"
+            android:drawableStart="@drawable/ic_notif_fire"
+            android:drawablePadding="4dp"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="5dp"
             android:text="400 kcal"
             android:textColor="@color/notif_text_secondary"
             android:textSize="11sp" />

@@ -4,78 +4,80 @@
     android:layout_height="wrap_content"
     android:background="@color/notif_bg"
     android:orientation="vertical"
-    android:padding="8dp">
+    android:padding="6dp">
 
-    <!-- Fila 1:pasos -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <!-- <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="&#x1F45F;"
-            android:textSize="16sp" /> -->
-
         <TextView
             android:id="@+id/notif_steps_text"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="7dp"
             android:text="0 pasos"
             android:textColor="@color/notif_text_primary"
             android:textSize="15sp"
             android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp">
+
             <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="&#x1F525;"
-            android:textSize="13sp" />
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="&#x1F525;"
+                android:textSize="12sp" />
 
-        <TextView
-            android:id="@+id/notif_energy_text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:text="0 kJ"
-            android:textColor="@color/notif_text_secondary"
-            android:textSize="12sp" />
+            <TextView
+                android:id="@+id/notif_energy_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="0 kJ"
+                android:textColor="@color/notif_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
 
-        <TextView
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_marginEnd="8dp"
-            android:text="&#x00B7;"
-            android:textColor="@color/notif_text_tertiary"
-            android:textSize="14sp" />
+            android:layout_marginStart="6dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="&#x1F4CD;"
-            android:textSize="13sp" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="&#x1F4CD;"
+                android:textSize="12sp" />
 
-        <TextView
-            android:id="@+id/notif_distance_text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:text="0,0 mi"
-            android:textColor="@color/notif_text_secondary"
-            android:textSize="12sp" />
+            <TextView
+                android:id="@+id/notif_distance_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="0,0 mi"
+                android:textColor="@color/notif_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
     </LinearLayout>
 
-    <!-- Barra de progreso -->
     <ProgressBar
         android:id="@+id/steps_notification_progress_bar"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="5dp"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="8dp"
         android:indeterminate="false"
         android:max="1000"
         android:progress="0"
@@ -83,35 +85,32 @@
         android:minHeight="8dp"
         android:maxHeight="8dp" />
 
-    <!-- Journey card (oculta si no hay journey activo) -->
     <LinearLayout
         android:id="@+id/steps_notification_journey_section"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="7dp"
+        android:layout_marginTop="8dp"
         android:background="@drawable/notif_journey_card_bg"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="6dp"
-        android:paddingBottom="6dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
         android:visibility="gone">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="&#x21C4;"
-            android:textColor="@color/notif_accent_blue"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+        <ImageView
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:src="@drawable/ic_notif_route"
+            android:tint="@color/notif_accent_blue" />
 
         <TextView
             android:id="@+id/notif_journey_route"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="5dp"
+            android:layout_marginStart="6dp"
             android:ellipsize="end"
             android:maxLines="1"
             android:text="Origin &#x2192; Destination"
@@ -119,26 +118,10 @@
             android:textSize="12sp" />
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="5dp"
-            android:layout_marginEnd="5dp"
-            android:text="&#x2022;"
-            android:textColor="@color/notif_accent_blue"
-            android:textSize="10sp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="5dp"
-            android:text="|"
-            android:textColor="@color/notif_separator"
-            android:textSize="12sp" />
-
-        <TextView
             android:id="@+id/notif_journey_percent"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
             android:text="0%"
             android:textColor="@color/notif_text_route"
             android:textSize="12sp"
@@ -147,9 +130,9 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="5dp"
-            android:layout_marginEnd="5dp"
-            android:text="|"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:text="•"
             android:textColor="@color/notif_separator"
             android:textSize="12sp" />
 

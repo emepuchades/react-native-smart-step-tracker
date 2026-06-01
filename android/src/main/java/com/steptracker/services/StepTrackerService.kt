@@ -94,6 +94,7 @@ class StepTrackerService : Service(), SensorEventListener {
 
             return NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notif_steps)
+                .setColor(ContextCompat.getColor(ctx, R.color.notif_accent_blue))
                 .setContentTitle(dailyNotificationTitle(stats.language))
                 .setContentText(stats.stepsText)
                 .setStyle(NotificationCompat.DecoratedCustomViewStyle())
@@ -101,6 +102,7 @@ class StepTrackerService : Service(), SensorEventListener {
                 .setCustomBigContentView(contentView)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
                 .apply {
                     if (contentIntent != null) {
@@ -355,7 +357,13 @@ class StepTrackerService : Service(), SensorEventListener {
                 }
             }
             ACTION_MIDNIGHT_RESET -> {
-                // Alarma de medianoche: resetear el contador a 0 para el nuevo día.
+                // Alarma de medianoche: resetear estado interno para el nuevo día.
+                // Se resetea detectorStepsToday y todayBaseSteps aquí mismo para que
+                // cualquier evento de sensor que llegue justo después de medianoche
+                // empiece desde 0, sin esperar al chequeo prevDate != today.
+                detectorStepsToday = 0
+                todayBaseSteps = 0
+                configRepo.set("today_base_steps", "0")
                 broadcastAndNotify(0)
                 scheduleMidnightReset()
             }
@@ -430,7 +438,11 @@ class StepTrackerService : Service(), SensorEventListener {
             val recoveredSteps = initOrFixOffset(counter, nowMs)
             persistState(counter, nowMs, today)
             syncActiveJourneyProgress(recoveredSteps, today, hourStr(nowMs).toInt())
-            val stepsToday = todayBaseSteps + maxOf((counter - todayOffsetCounter).toInt(), 0)
+            // Usar el valor real de la BD: initOrFixOffset ya actualizó la BD con los
+            // pasos recuperados. stepsToday calculado como todayBaseSteps + 0 sería 0
+            // (porque todayOffsetCounter acaba de ser igualado a counter), pero la BD
+            // tiene el total correcto incluyendo los pasos acumulados entre reinicios.
+            val stepsToday = historyRepo.getStepsForDate(today)
             broadcastAndNotify(stepsToday)
             lastCounter = counter
             return
@@ -448,7 +460,8 @@ class StepTrackerService : Service(), SensorEventListener {
         }
 
         val prevDate = configRepo.get("prev_date") ?: today
-        if (prevDate != today) {
+        val isDayChange = prevDate != today
+        if (isDayChange) {
             initOrFixOffset(counter, nowMs)
             configRepo.set("prev_date", today)
         }
@@ -459,7 +472,12 @@ class StepTrackerService : Service(), SensorEventListener {
             return
         }
 
-        saveHourly(today, hourStr(nowMs), delta)
+        // No guardar el delta de frontera de medianoche en el histórico horario del
+        // nuevo día: esos pasos se acumularon antes de medianoche y no pertenecen
+        // a la hora 0 del día actual. El total diario arranca en 0 correctamente.
+        if (!isDayChange) {
+            saveHourly(today, hourStr(nowMs), delta)
+        }
 
         val stepsToday = todayBaseSteps + maxOf((counter - todayOffsetCounter).toInt(), 0)
         val previousStepsCounter = stepsToday - delta.toInt()
@@ -660,6 +678,7 @@ class StepTrackerService : Service(), SensorEventListener {
 
         return NotificationCompat.Builder(this, JOURNEY_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notif_journey)
+            .setColor(ContextCompat.getColor(this, R.color.notif_accent_blue))
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setCustomContentView(contentView)
             .setCustomBigContentView(contentView)
@@ -668,6 +687,7 @@ class StepTrackerService : Service(), SensorEventListener {
             .setAutoCancel(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .apply {
                 if (contentIntent != null) {
                     setContentIntent(contentIntent)
@@ -732,7 +752,8 @@ class StepTrackerService : Service(), SensorEventListener {
             )
         }
         return NotificationCompat.Builder(this, DAILY_GOAL_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notif_journey)
+            .setSmallIcon(R.drawable.ic_notif_steps)
+            .setColor(ContextCompat.getColor(this, R.color.notif_accent_blue))
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setCustomContentView(contentView)
             .setCustomBigContentView(contentView)
@@ -741,6 +762,7 @@ class StepTrackerService : Service(), SensorEventListener {
             .setAutoCancel(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .apply {
                 if (contentIntent != null) {
                     setContentIntent(contentIntent)
@@ -758,12 +780,14 @@ class StepTrackerService : Service(), SensorEventListener {
         val stepsUnit = ns.steps
         val text = "$stepsFormatted $stepsUnit"
         return NotificationCompat.Builder(this, DAILY_GOAL_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notif_journey)
+            .setSmallIcon(R.drawable.ic_notif_steps)
+            .setColor(ContextCompat.getColor(this, R.color.notif_accent_blue))
             .setContentTitle(title)
             .setContentText(text)
             .setAutoCancel(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .build()
     }
 
@@ -776,12 +800,14 @@ class StepTrackerService : Service(), SensorEventListener {
 
         return NotificationCompat.Builder(this, JOURNEY_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notif_journey)
+            .setColor(ContextCompat.getColor(this, R.color.notif_accent_blue))
             .setContentTitle(title)
             .setContentText(safeDestination)
             .setStyle(NotificationCompat.BigTextStyle().bigText(safeDestination))
             .setAutoCancel(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .build()
     }
 

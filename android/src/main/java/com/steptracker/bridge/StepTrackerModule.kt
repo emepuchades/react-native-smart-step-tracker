@@ -1438,11 +1438,13 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
             val notification = NotificationCompat.Builder(reactContext, BADGE_CHANNEL_ID)
                 .setSmallIcon(com.steptracker.R.drawable.ic_notif_journey)
+                .setColor(ContextCompat.getColor(reactContext, com.steptracker.R.color.notif_accent_blue))
                 .setContentTitle(contentTitle)
                 .setContentText(contentText)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(expandedText))
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .apply {
                     if (contentIntent != null) {
                         setContentIntent(contentIntent)

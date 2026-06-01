@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Notification colors – light mode -->
-    <color name="notif_bg">#FFFFFF</color>
+    <color name="notif_bg">#00000000</color>
     <color name="notif_text_primary">#0F172A</color>
     <color name="notif_text_secondary">#52606D</color>
     <color name="notif_text_tertiary">#9CA3AF</color>
     <color name="notif_text_muted">#7B8794</color>
     <color name="notif_text_route">#374151</color>
-    <color name="notif_separator">#D1D5DB</color>
+    <color name="notif_separator">#1A0F172A</color>
     <color name="notif_accent_blue">#3B82F6</color>
-    <color name="notif_card_bg">#EFF6FF</color>
-    <color name="notif_card_stroke">#BFDBFE</color>
+    <color name="notif_success">#0F9D6C</color>
+    <color name="notif_card_bg">#0D0F172A</color>
+    <color name="notif_card_stroke">#1F0F172A</color>
+    <color name="notif_journey_card_bg">#EFF6FF</color>
+    <color name="notif_journey_card_stroke">#BFDBFE</color>
+    <color name="notif_chip_bg">#120F172A</color>
+    <color name="notif_chip_stroke">#160F172A</color>
+    <color name="notif_badge_bg">#1410B981</color>
+    <color name="notif_progress_track">#120F172A</color>
+    <color name="notif_progress_fill">#3B82F6</color>
 </resources>

@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
@@ -237,10 +238,12 @@ class DriveBackupWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, pa
         }
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_sync)
+            .setColor(ContextCompat.getColor(applicationContext, com.steptracker.R.color.notif_accent_blue))
             .setContentTitle("StepJourney")
             .setContentText(ns.driveBackupSaved)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setAutoCancel(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .build()
         nm.notify(NOTIFICATION_ID, notification)
     }
