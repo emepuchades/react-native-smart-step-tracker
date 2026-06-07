@@ -938,9 +938,13 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun backupToDrive(promise: Promise) {
         Thread {
+            var prevBackupDate: String? = null
             try {
                 val token = getAuthToken()
 
+                val isoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).format(Date())
+                prevBackupDate = prefsManager.getLastBackupDate()
+                prefsManager.setLastBackupDate(isoDate)
                 val json = buildBackupJson()
                 val fileName = "stepjourney_backup.json"
 
@@ -998,20 +1002,22 @@ class StepTrackerModule(private val reactContext: ReactApplicationContext) :
 
                 android.util.Log.d("GoogleDrive", "Upload response $responseCode: $responseBody")
 
-                if (responseCode == 401) {
-                    android.util.Log.w("GoogleDrive", "401 received, session expired")
-                    promise.reject("DRIVE_ERROR", "Session expired, please sign in again")
-                } else if (responseCode == 403 && responseBody.contains("storageQuotaExceeded")) {
-                    android.util.Log.w("GoogleDrive", "Storage quota exceeded")
-                    promise.reject("QUOTA_ERROR", "storageQuotaExceeded")
-                } else if (responseCode in 200..299) {
-                    val isoDate = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).format(Date())
-                    prefsManager.setLastBackupDate(isoDate)
+                if (responseCode in 200..299) {
                     promise.resolve(isoDate)
                 } else {
-                    promise.reject("DRIVE_ERROR", "Upload failed ($responseCode): $responseBody")
+                    prevBackupDate?.let { prefsManager.setLastBackupDate(it) }
+                    if (responseCode == 401) {
+                        android.util.Log.w("GoogleDrive", "401 received, session expired")
+                        promise.reject("DRIVE_ERROR", "Session expired, please sign in again")
+                    } else if (responseCode == 403 && responseBody.contains("storageQuotaExceeded")) {
+                        android.util.Log.w("GoogleDrive", "Storage quota exceeded")
+                        promise.reject("QUOTA_ERROR", "storageQuotaExceeded")
+                    } else {
+                        promise.reject("DRIVE_ERROR", "Upload failed ($responseCode): $responseBody")
+                    }
                 }
             } catch (e: Exception) {
+                prevBackupDate?.let { prefsManager.setLastBackupDate(it) }
                 android.util.Log.e("GoogleDrive", "backupToDrive failed", e)
                 promise.reject("DRIVE_ERROR", e.message ?: "Unknown error")
             }
